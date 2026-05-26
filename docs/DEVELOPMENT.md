@@ -56,12 +56,29 @@ Choose the approach that fits your workflow:
 
 ### Option A: Personal Firebase project (most common)
 
-1. Go to [Firebase Console](https://console.firebase.google.com/) and create a new project
-2. Enable **Authentication** (Email/Password + Google providers)
-3. Create a **Firestore Database** in test mode
-4. Create a **Storage** bucket
-5. Go to Project Settings > General > Your apps > Add a Web app
-6. Copy the config values into `.env.local` (use `.env.local.example` as the template — it has detailed instructions for each field)
+1. Go to [Firebase Console](https://console.firebase.google.com/) and create a new project.
+
+2. **Authentication** (matches `contexts/AuthContext.tsx` — Email/Password, Google, and GitHub popups):
+   1. Open **Build → Authentication → Get started**.
+   2. On **Sign-in method**, enable **Email/Password**, **Google** (set a support email on the consent screen), and **GitHub**.
+   3. For **GitHub**, Firebase shows an **Authorization callback URL** (typically `https://<your-project-id>.firebaseapp.com/__/auth/handler`). In [GitHub → Settings → Developer settings → OAuth Apps](https://github.com/settings/developers), create an OAuth App and paste that URL as **Authorization callback URL**. Copy the GitHub app’s **Client ID** and **Client secret** back into Firebase’s GitHub provider dialog and save.
+   4. Under **Authentication → Settings → Authorized domains**, add **`localhost`** (and your production domain when you deploy). Without `localhost`, Google/GitHub popup sign-in fails on `http://localhost:3000`.
+
+   > **Note:** Credentials for **Firebase** GitHub sign-in live only in the Firebase Console. The `NEXT_PUBLIC_GITHUB_*` and `GITHUB_CLIENT_SECRET` entries in [`.env.local.example`](../.env.local.example) are for this repo’s **profile link** flow (`/api/github/*`), not for the Firebase Auth GitHub button.
+
+3. **Firestore**: Create a database (test mode is fine for a personal sandbox; tighten rules before real data).
+
+4. **Realtime Database**: Create a default database instance. Put its URL in **`NEXT_PUBLIC_FIREBASE_DATABASE_URL`** — the web client calls `getDatabase()` in `lib/firebase.ts` when config is present.
+
+5. **Storage**: Create a default bucket; match **`NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`** to what the console shows.
+
+6. **Web app config**: **Project settings → General → Your apps →** register a **Web** app. Copy **apiKey**, **authDomain**, **projectId**, **storageBucket**, **messagingSenderId**, **appId**, and the Realtime Database URL into **`.env.local`**, using [`.env.local.example`](../.env.local.example) as the template.
+
+7. **Link-token signing secret:** set **`UNSUBSCRIBE_SECRET`** to a unique value of at least 32 bytes. Generate one with `openssl rand -hex 32`. This signs unsubscribe, cohort-withdraw, and PyData-withdraw links; production builds fail closed if it is missing or weak.
+
+8. **Optional but common for API routes and scripts:** add **`FIREBASE_SERVICE_ACCOUNT_JSON`** as described in [Formatting `FIREBASE_SERVICE_ACCOUNT_JSON`](#formatting-firebase_service_account_json).
+
+Restart **`npm run dev`** after editing `.env.local` so Next.js reloads env vars.
 
 ### Option B: Firebase Emulator (no cloud account needed)
 
@@ -103,6 +120,14 @@ cat path/to/serviceAccount.json | jq -c . | pbcopy
 | `npm run test:rules` | Firestore security rules tests | When editing `config/firebase/firestore.rules` (requires Firebase emulator) |
 | `npm run validate-env` | Validate required environment variables | Debugging build failures |
 
+#### Emergency build escape hatch — `SKIP_TYPECHECK=1`
+
+`next.config.js` honors `SKIP_TYPECHECK=1` to disable both the TypeScript and ESLint build checks for one invocation. Use it only when pre-existing in-flight branch state has typecheck/lint errors in unrelated files and you need a local production build for visual QA. **Never set this in CI** — CI is the boundary that catches type errors; bypassing it locally is fine because you're the boundary.
+
+```bash
+SKIP_TYPECHECK=1 npm run build && npm start
+```
+
 ### Admin/Ops Scripts
 
 These require `FIREBASE_SERVICE_ACCOUNT_JSON` in `.env.local`:
@@ -114,6 +139,29 @@ These require `FIREBASE_SERVICE_ACCOUNT_JSON` in `.env.local`:
 | `npm run rate-limit-cleanup` | Clean up expired rate limit entries |
 | `npm run backfill-merge-credit` | Backfill contributor merge credits (see `docs/CONTRIBUTOR_MERGE_CREDIT_BACKFILL.md`) |
 | `npm run send-hack-a-sprint-emails` | Send hackathon event emails (see `docs/HACK_A_SPRINT_2026_OPS.md`) |
+
+### Categories of script in `scripts/`
+
+The `scripts/` directory holds ~90 files. Most are not part of the day-to-day developer loop. Use this guide to know which are which.
+
+**Supported (referenced from `package.json` scripts):** anything wired up in `package.json` under `scripts` is a supported entry point. Run them via `npm run <name>`, not by invoking the file directly — the `package.json` wrapper sets the right `tsx` flags. The current supported set: `dev`, `build`, `test`, `test:rules`, `test:e2e`, `lint`, `type-check`, `validate-env`, `generate:openapi`, `generate:api-md`, `generate:llms-txt`, `check:route-contracts`, `seed-hackathon-teams`, `check-members-db`, `rate-limit-cleanup`, `rebuild-snapshots`, `backfill-merge-credit`, `send-hack-a-sprint-emails`, `sync-event-contacts`, `send-contact-list-email`, `ai-evaluate`, `ai-evaluate:apply-json`, `score-pydata`, `distribute-credits`, `seed-luma-registrants`, `generate-contributors`, `add:gpl-headers`, `analyze`.
+
+**Maintainer ops scripts (invoked directly with `tsx`):** files prefixed `send-`, `sync-`, `seed-`, `set-cohort-`, `admit-`, `audit-`, `freeze-`, `rank-`, `count-`, `list-`, `export-`, `treasure-hunt-`, `admin-grant-`, `build-hack-a-sprint-`, `firestore-reads-metrics`, `suppress-mailgun-bounces`. These are operational one-shots used to run cohorts, send broadcast emails, audit game state, or freeze rankings. They are kept in the tree so the ops work is reviewable and replayable, but they are not part of the normal contributor loop. Most assume `FIREBASE_SERVICE_ACCOUNT_JSON` in `.env.local` and many will only do the right thing when run by a maintainer with the right context. **If you're a contributor, you almost certainly don't need to run any of these.**
+
+**Internal analysis (prefixed `_`):** files starting with `_` (e.g. `_analysis-pull-gcp-metrics.ts`, `_merge-pydata-website-luma.ts`) are throwaway analysis scripts kept for reproducibility. They may be deleted at any time. Don't depend on them from other code.
+
+**Helpers (`scripts/_lib/`, `scripts/data/`):** shared modules used by the scripts above. Not entry points.
+
+**CI/workflow helpers:**
+- `add-gpl-headers.js` — runs in pre-commit to keep GPL headers in place
+- `check-route-contracts.js` — runs in `prebuild` to fail the build if an API route lacks a ts-rest contract
+- `generate-openapi.ts`, `generate-api-md.ts`, `generate-llms-txt.js` — regenerate `openapi.json`, `docs/API.md`, and `public/llms.txt` during `prebuild`
+- `validate-env.ts` — fails the build if required env vars are missing or placeholder
+- `validate-hack-a-sprint-submission-pr.cjs` — runs in the hack-a-sprint submission validation workflow
+- `vercel-ignore-build.sh` — the `ignoreCommand` used by `vercel.json` to skip non-production builds
+- `generate-contributors.sh` — runs in the `update-contributors` workflow on push to main
+
+If a script is missing from this list, treat it as maintainer-internal and ask before running it.
 
 ---
 
@@ -208,6 +256,55 @@ cursor-boston/
 - **Firestore security rules** are at `config/firebase/firestore.rules` — these are the source of truth for data access control
 
 For the full API endpoint reference, see [docs/API.md](API.md).
+
+---
+
+## Errors and observability
+
+Errors are logged through `lib/logger.ts`. In dev they print to console; in production they additionally flow to **Sentry** when `SENTRY_DSN` is set.
+
+### Where errors come from
+
+- **API routes**: every route catches its own errors and calls `logger.logError(err, { endpoint: "/api/<...>", area: "<feature>" })`. The `area` tag is what surfaces in Sentry's filter dropdown — common values: `account-deletion`, `community-safety`, `react-boundary`, `mentorship`.
+- **React error boundaries**: `app/error.tsx`, `app/global-error.tsx`, `components/ErrorBoundary.tsx` catch render errors.
+- **Background jobs**: `lib/account-deletion/cascade.ts` tags each cascade step (`step: <collection>`) so a transient failure on `messageReactions` is visible without scanning every log line.
+
+### Activating Sentry
+
+The codebase ships *scaffolded* — Sentry hooks are wired but inactive until you install the package and set DSNs:
+
+1. `npm install @sentry/nextjs`
+2. Create a project at sentry.io and copy the DSNs into `.env.local`:
+   ```
+   SENTRY_DSN=https://...@sentry.io/...
+   NEXT_PUBLIC_SENTRY_DSN=https://...@sentry.io/...
+   ```
+3. (Optional) `npx @sentry/wizard@latest -i nextjs` to add source-map upload.
+4. Restart the dev server. Trigger a synthetic error from any API route and confirm it appears in Sentry within ~60s.
+
+The `instrumentation.ts` hook at the repo root and the dynamic-import shim in `lib/logger.ts` both no-op when `SENTRY_DSN` is unset, so installing the package without configuring it has zero runtime effect.
+
+### Adding a new logger call site
+
+```ts
+import { logger } from "@/lib/logger";
+
+try {
+  // ...
+} catch (err) {
+  logger.logError(err, {
+    endpoint: "/api/your/route",
+    area: "your-feature",   // becomes a Sentry tag
+    // step: "specific-substep",  // optional sub-tag
+    uid: user?.uid,
+  });
+  return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+}
+```
+
+### What gets scrubbed
+
+Both error messages and metadata pass through PII scrubbers before any external system sees them. Stripped: bearer tokens, base64 secrets, email addresses, server-side filesystem paths, common API-key prefixes (`sk_`, `ghp_`, `AIza...`), and metadata keys matching `/email|password|token|secret|cookie/i`. See `lib/logger.ts → sanitizeErrorMessage` and `scrubPii`.
 
 ---
 

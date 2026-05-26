@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withMiddleware, rateLimitConfigs } from "@/lib/middleware";
 import { logger } from "@/lib/logger";
+import { discordContract } from "@/lib/api-schemas/discord";
 
 const DISCORD_CLIENT_ID = process.env.NEXT_PUBLIC_DISCORD_CLIENT_ID;
 const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
@@ -52,8 +54,12 @@ function buildCallbackRedirect(
 
 async function handleDiscordCallback(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const code = searchParams.get("code");
-  const state = searchParams.get("state");
+  const parsedQuery = discordContract.callback.query.safeParse({
+    code: searchParams.get("code") ?? undefined,
+    state: searchParams.get("state") ?? undefined,
+  });
+  const code = parsedQuery.success ? parsedQuery.data.code ?? null : null;
+  const state = parsedQuery.success ? parsedQuery.data.state ?? null : null;
   const expectedState = request.cookies.get("discord_oauth_state")?.value;
   const returnTo = sanitizeReturnTo(
     request.cookies.get("discord_oauth_return_to")?.value
@@ -153,8 +159,33 @@ async function handleDiscordCallback(request: NextRequest) {
   }
 }
 
-// Apply rate limiting and logging middleware
+// Apply rate limiting and logging middleware. Rate-limit denials
+// redirect to the originating page with `?discord=error&message=rate_limited`
+// instead of returning JSON 429 — see lib/oauth-errors.ts for the
+// matching client-side copy.
+//
+// `failMode: "degrade"` (was "closed" through 2026-05-24): if Upstash is
+// unreachable we fall back to the per-instance in-memory rate limiter
+// instead of denying every callback. Production tripped fail-closed all
+// afternoon when Upstash flapped — every OAuth user got
+// `?discord=error&message=rate_limited` even though no real rate limit had
+// been hit. Brute-force protection on the callback is the cookie-bound
+// `state` token; the rate limit is purely defense-in-depth.
 export const GET = withMiddleware(
   rateLimitConfigs.oauthCallback,
-  handleDiscordCallback
+  handleDiscordCallback,
+  {
+    distributed: true,
+    failMode: "degrade",
+    onRateLimitDenied: (request) => {
+      const returnTo = sanitizeReturnTo(
+        request.cookies.get("discord_oauth_return_to")?.value
+      );
+      return buildCallbackRedirect(
+        request,
+        returnTo,
+        "discord=error&message=rate_limited"
+      );
+    },
+  }
 );

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -8,7 +9,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAgent, getVerifiedAgent } from "@/lib/agents";
 import { getClientIdentifier } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
+import type { UpstashRateLimitResult } from "@/lib/upstash-rate-limit";
 import { parseRequestBody } from "@/lib/api-response";
+import { agentsContract } from "@/lib/api-schemas/agents";
+
+const FAIL_CLOSED_RATE_LIMIT = { failMode: "closed" } as const;
+
+function rateLimitResponse(rate: UpstashRateLimitResult): NextResponse {
+  const retryAfter = rate.retryAfter || 60;
+  const unavailable = rate.reason === "rate_limit_unavailable";
+
+  return NextResponse.json(
+    {
+      success: false,
+      error: unavailable
+        ? "Rate limit unavailable"
+        : "Too many registration attempts",
+      hint: "Please try again later",
+      retryAfterSeconds: retryAfter,
+    },
+    {
+      status: unavailable ? 503 : 429,
+      headers: { "Retry-After": String(retryAfter) },
+    }
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,73 +57,34 @@ export async function POST(request: NextRequest) {
 
     // Rate limit: 10 registrations per hour per IP
     const clientId = getClientIdentifier(request);
-    const rateLimitResult = await checkUpstashRateLimit(`agent-register:${clientId}`, {
-      windowMs: 60 * 60 * 1000, // 1 hour
-      maxRequests: 10,
-    });
+    const rateLimitResult = await checkUpstashRateLimit(
+      `agent-register:${clientId}`,
+      {
+        windowMs: 60 * 60 * 1000, // 1 hour
+        maxRequests: 10,
+      },
+      FAIL_CLOSED_RATE_LIMIT
+    );
 
     if (!rateLimitResult.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Too many registration attempts",
-          hint: "Please try again later",
-          retryAfterSeconds: rateLimitResult.retryAfter,
-        },
-        { status: 429 }
-      );
+      return rateLimitResponse(rateLimitResult);
     }
 
     // Parse request body
     const bodyOrError = await parseRequestBody(request);
     if (bodyOrError instanceof NextResponse) return bodyOrError;
-    const { name, description } = bodyOrError;
-
-    // Validate name
-    if (!name || typeof name !== "string") {
+    const parsed = agentsContract.register.body.safeParse(bodyOrError);
+    if (!parsed.success) {
       return NextResponse.json(
         {
           success: false,
-          error: "Name is required",
-          hint: "Provide a name for your agent in the request body",
+          error: parsed.error.issues[0]?.message ?? "Invalid body",
         },
         { status: 400 }
       );
     }
-
-    const trimmedName = name.trim();
-    if (trimmedName.length < 2 || trimmedName.length > 50) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Name must be between 2 and 50 characters",
-        },
-        { status: 400 }
-      );
-    }
-
-    // Validate name format (alphanumeric, spaces, hyphens, underscores)
-    if (!/^[a-zA-Z0-9\s\-_]+$/.test(trimmedName)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Name can only contain letters, numbers, spaces, hyphens, and underscores",
-        },
-        { status: 400 }
-      );
-    }
-
-    // Validate description if provided
-    const trimmedDescription = description?.trim();
-    if (trimmedDescription && trimmedDescription.length > 500) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Description must be 500 characters or less",
-        },
-        { status: 400 }
-      );
-    }
+    const trimmedName = parsed.data.name.trim();
+    const trimmedDescription = parsed.data.description?.trim();
 
     // Create the agent
     const { agent, apiKey, claimUrl } = await createAgent(

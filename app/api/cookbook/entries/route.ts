@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -9,7 +10,6 @@ import type {
   DocumentSnapshot,
   Firestore,
   Query,
-  QueryDocumentSnapshot,
 } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase-admin";
@@ -19,11 +19,16 @@ import { checkRateLimit, getClientIdentifier } from "@/lib/rate-limit";
 import { matchesCookbookSearchTerms } from "@/lib/cookbook-search";
 import { sanitizeText, sanitizeDocId } from "@/lib/sanitize";
 import {
-  COOKBOOK_CATEGORIES,
-  WORKS_WITH_LANGUAGES,
   type CookbookCategory,
+  type CookbookEntry,
   type WorksWithTag,
 } from "@/types/cookbook";
+import { cookbookContract } from "@/lib/api-schemas/cookbook";
+import {
+  isValidCookbookCategory,
+  isValidWorksWithTag,
+  mapCookbookDocToEntry,
+} from "@/lib/cookbook-entries";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,11 +36,11 @@ export const dynamic = "force-dynamic";
 const COOKBOOK_SUBMIT_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 10 };
 
 function isValidCategory(v: string): v is CookbookCategory {
-  return COOKBOOK_CATEGORIES.includes(v as CookbookCategory);
+  return isValidCookbookCategory(v);
 }
 
 function isValidWorksWith(v: string): v is WorksWithTag {
-  return WORKS_WITH_LANGUAGES.includes(v as WorksWithTag);
+  return isValidWorksWithTag(v);
 }
 
 const PAGE_SIZE = 12;
@@ -74,43 +79,6 @@ function isFirestoreIndexError(err: unknown): boolean {
   );
 }
 
-interface CookbookEntryRow {
-  id: string;
-  title: string;
-  description: string;
-  promptContent: string;
-  category: string;
-  tags: string[];
-  worksWith: string[];
-  authorId: string;
-  authorDisplayName: string;
-  createdAt: string;
-  upCount: number;
-  downCount: number;
-}
-
-function mapDocToEntry(doc: QueryDocumentSnapshot): CookbookEntryRow {
-  const d = doc.data();
-  const upCount = Number(d.upCount ?? 0);
-  const downCount = Number(d.downCount ?? 0);
-  return {
-    id: doc.id,
-    title: d.title || "",
-    description: d.description || "",
-    promptContent: d.promptContent || "",
-    category: d.category || "other",
-    tags: Array.isArray(d.tags) ? d.tags : [],
-    worksWith: Array.isArray(d.worksWith) ? d.worksWith : [],
-    authorId: d.authorId || "",
-    authorDisplayName: d.authorDisplayName || "",
-    createdAt: d.createdAt?.toMillis?.()
-      ? new Date(d.createdAt.toMillis()).toISOString()
-      : "",
-    upCount,
-    downCount,
-  };
-}
-
 function buildFilteredQuery(
   db: Firestore,
   sort: CookbookSort,
@@ -143,6 +111,16 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
+    // Contract-level validation — currently lenient (all fields optional);
+    // the values we read below preserve the original parse / clamp logic.
+    cookbookContract.entries.query.safeParse({
+      limit: searchParams.get("limit") ?? undefined,
+      cursor: searchParams.get("cursor") ?? undefined,
+      category: searchParams.get("category") ?? undefined,
+      worksWith: searchParams.get("worksWith") ?? undefined,
+      search: searchParams.get("search") ?? undefined,
+      sort: searchParams.get("sort") ?? undefined,
+    });
     const category = searchParams.get("category");
     const worksWith = searchParams.get("worksWith");
     const searchRaw = searchParams.get("search")?.trim().toLowerCase() || "";
@@ -158,7 +136,7 @@ export async function GET(request: NextRequest) {
     const searchTerms = hasSearch ? searchRaw.split(/\s+/).filter(Boolean) : [];
 
     if (hasSearch) {
-      const results: CookbookEntryRow[] = [];
+      const results: CookbookEntry[] = [];
       let resumeAfter: DocumentSnapshot | null = null;
       if (cursor) {
         const cdoc = await db.collection("cookbook_entries").doc(cursor).get();
@@ -188,7 +166,7 @@ export async function GET(request: NextRequest) {
 
         for (const doc of snap.docs) {
           resumeAfter = doc;
-          const entry = mapDocToEntry(doc);
+          const entry = mapCookbookDocToEntry(doc);
           if (
             !matchesCookbookSearchTerms(
               entry.title,
@@ -264,7 +242,7 @@ export async function GET(request: NextRequest) {
     }
 
     const docs = snap.docs.slice(0, limit);
-    const entries = docs.map(mapDocToEntry);
+    const entries = docs.map(mapCookbookDocToEntry);
     const hasMore = snap.docs.length > limit;
     const nextCursor =
       hasMore && entries.length > 0 ? entries[entries.length - 1].id : null;
@@ -318,10 +296,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rawBody = await request.json();
+    const rawBody = await request.json().catch(() => null);
     if (!isNonNullObject(rawBody)) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
+    // Contract-level shape parse runs alongside the existing detailed
+    // sanitize / length / category checks below (which preserve the
+    // original error wording).
+    cookbookContract.createEntry.body.safeParse(rawBody);
     const body = rawBody;
     const rawTitle = body.title?.trim() || "";
     const rawDescription = body.description?.trim() || "";

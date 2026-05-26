@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -8,12 +9,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { getCurrentVirtualHackathonId, isVirtualHackathonId } from "@/lib/hackathons";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
+import { fetchWithTimeout } from "@/lib/http-fetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const CRON_SECRET = process.env.CRON_SECRET;
+const GITHUB_FETCH_TIMEOUT_MS = 8_000;
 
 function parseRepoUrl(repoUrl: string): { owner: string; repo: string } | null {
   try {
@@ -59,8 +63,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Server not configured" }, { status: 500 });
     }
 
-    const hackathonId =
-      request.nextUrl.searchParams.get("hackathonId") || getCurrentVirtualHackathonId();
+    const parsedQuery = hackathonsContract.submissionsCheckDisqualified.query.safeParse({
+      hackathonId: request.nextUrl.searchParams.get("hackathonId") ?? undefined,
+    });
+    if (!parsedQuery.success) {
+      return NextResponse.json(
+        { error: parsedQuery.error.issues[0]?.message ?? "Invalid query" },
+        { status: 400 }
+      );
+    }
+    const hackathonId = parsedQuery.data.hackathonId || getCurrentVirtualHackathonId();
 
     if (!isVirtualHackathonId(hackathonId)) {
       return NextResponse.json(
@@ -81,25 +93,40 @@ export async function GET(request: NextRequest) {
       headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
     }
 
+    const scannedCount = submissionsSnap.docs.length;
+    let checkedCount = 0;
+    let skippedCount = 0;
+    let githubErrorCount = 0;
     let disqualifiedCount = 0;
 
     for (const docSnap of submissionsSnap.docs) {
       const data = docSnap.data();
-      if (data.disqualified || !data.submittedAt || !data.repoUrl || !data.cutoffAt) continue;
+      if (data.disqualified || !data.submittedAt || !data.repoUrl || !data.cutoffAt) {
+        skippedCount++;
+        continue;
+      }
 
       const cutoffAt = data.cutoffAt?.toDate ? data.cutoffAt.toDate() : new Date(data.cutoffAt);
       const since = cutoffAt.toISOString();
 
       const parsed = parseRepoUrl(data.repoUrl);
-      if (!parsed) continue;
+      if (!parsed) {
+        skippedCount++;
+        continue;
+      }
 
       try {
-        const commitsRes = await fetch(
+        checkedCount++;
+        const commitsRes = await fetchWithTimeout(
           `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/commits?since=${encodeURIComponent(since)}`,
-          { headers }
+          { headers },
+          GITHUB_FETCH_TIMEOUT_MS
         );
 
-        if (!commitsRes.ok) continue;
+        if (!commitsRes.ok) {
+          githubErrorCount++;
+          continue;
+        }
 
         const commits = (await commitsRes.json()) as unknown[];
         const hasCommitAfterCutoff = Array.isArray(commits) && commits.length > 0;
@@ -113,12 +140,17 @@ export async function GET(request: NextRequest) {
           disqualifiedCount++;
         }
       } catch {
-        // Skip on error (rate limit, repo gone, etc.)
+        githubErrorCount++;
+        // Skip on error (timeout, rate limit, repo gone, etc.)
       }
     }
 
     return NextResponse.json({
       hackathonId,
+      scannedCount,
+      checkedCount,
+      skippedCount,
+      githubErrorCount,
       disqualifiedCount,
       message: `Checked submissions for ${hackathonId}; disqualified ${disqualifiedCount}.`,
     });

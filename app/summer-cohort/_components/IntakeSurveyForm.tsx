@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -145,6 +146,11 @@ type Props = {
   defaultEmail: string;
   /** Cohort id from the application (read-only display). */
   cohortId: string;
+  /** Server-authoritative answer to "did this user participate in cohort 1?",
+   *  computed by the parent from the application record. Only used when
+   *  cohortId === "cohort-2" — the c2 survey renders this pre-selected and
+   *  disabled so the participant sees the linkage. Ignored on c1. */
+  participatedInCohort1: boolean;
   /** Called after a successful submit so the parent can re-fetch + show the dashboard. */
   onComplete: () => void;
 };
@@ -153,6 +159,7 @@ const EMPTY: IntakeSurveyResponse = {
   email: "",
   cohort: "",
   consentToResearch: false,
+  participatedInCohort1: null,
 
   age: null,
   gender: null,
@@ -196,12 +203,21 @@ const EMPTY: IntakeSurveyResponse = {
   eightWeekGoal: "",
 };
 
-export function IntakeSurveyForm({ defaultEmail, cohortId, onComplete }: Props) {
+export function IntakeSurveyForm({
+  defaultEmail,
+  cohortId,
+  participatedInCohort1,
+  onComplete,
+}: Props) {
   const { user } = useAuth();
+  const isCohort2 = cohortId === "cohort-2";
   const [r, setR] = useState<IntakeSurveyResponse>(() => ({
     ...EMPTY,
     email: defaultEmail,
     cohort: cohortId,
+    // The server overwrites this on POST; we seed it here so the form
+    // renders the disabled toggle in the correct position from the start.
+    participatedInCohort1: isCohort2 ? participatedInCohort1 : null,
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -298,18 +314,28 @@ export function IntakeSurveyForm({ defaultEmail, cohortId, onComplete }: Props) 
     <section className="rounded-xl border border-emerald-300 bg-emerald-50/50 p-6 dark:border-emerald-900 dark:bg-emerald-950/20">
       <div className="mb-6">
         <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-          Required before kickoff
+          ~5 min · helps us help you
         </div>
         <h2 className="mt-3 text-xl font-bold">Intake Survey</h2>
         <p className="mt-2 text-sm text-neutral-700 dark:text-neutral-300">
-          You&apos;ve been admitted to Cohort 1. Before you see the cohort
-          dashboard, we need ~5 minutes for an intake survey. This is a research
-          instrument — your responses help us study how the program changes
-          participants&apos; experience with AI tools.
+          Quick onboarding so the team can build tools that help you ship
+          faster — track progress, surface where people get stuck, route help
+          to the right person, and make the next six weeks smoother and more
+          fun.
         </p>
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <p className="font-semibold">Heads up: this is NOT research.</p>
+          <p className="mt-1">
+            Cursor Boston&apos;s research IRB is still pending. This form is
+            for operational use only — it is not part of any experimental or
+            research project. Once IRB is approved, we&apos;ll send a separate,
+            fully-optional research survey; you can decide then whether you
+            want to participate.
+          </p>
+        </div>
         <p className="mt-2 text-xs text-neutral-500">
-          You can update your answers later from this page if anything changes
-          before kickoff. Required fields are marked with{" "}
+          You can update your answers later from this page if anything changes.
+          Required fields are marked with{" "}
           <span className="text-red-500">*</span>. Your in-progress answers
           are saved in this browser so a refresh won&apos;t lose them.
         </p>
@@ -322,11 +348,11 @@ export function IntakeSurveyForm({ defaultEmail, cohortId, onComplete }: Props) 
 
       <form onSubmit={submit} className="space-y-10">
         {/* ----------------------------------------------------------------
-            Section 1: Linkage and consent
+            Section 1: Linkage (email + cohort)
            ---------------------------------------------------------------- */}
         <fieldset className="space-y-4">
           <legend className="text-sm font-semibold uppercase tracking-wider text-neutral-500">
-            1. Linkage &amp; consent
+            1. Your contact info
           </legend>
 
           <FieldEmail
@@ -344,23 +370,50 @@ export function IntakeSurveyForm({ defaultEmail, cohortId, onComplete }: Props) 
             />
           </Field>
 
-          <label className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${isMissing("consentToResearch") ? "border-red-400 bg-red-50 dark:bg-red-950/30" : "border-neutral-300 dark:border-neutral-700"}`}>
-            <input
-              type="checkbox"
-              checked={r.consentToResearch}
-              onChange={(e) => update("consentToResearch", e.target.checked)}
-              className="mt-1"
-            />
-            <span>
-              <span className="font-medium">I consent to research use of program data.</span>{" "}
-              <span className="text-neutral-600 dark:text-neutral-400">
-                Responses are aggregated and de-identified for analysis. The IRB
-                protocol summary will be shared with respondents before
-                publication.
-              </span>{" "}
-              <span className="text-red-500">*</span>
-            </span>
-          </label>
+          {isCohort2 ? (
+            <Field label="Participated in Cohort 1?">
+              <div className="mt-1 grid grid-cols-2 gap-2">
+                <label
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm ${
+                    participatedInCohort1
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+                      : "border-neutral-200 bg-neutral-100/60 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/40"
+                  } opacity-90`}
+                >
+                  <input
+                    type="radio"
+                    name="participatedInCohort1"
+                    checked={participatedInCohort1 === true}
+                    disabled
+                    readOnly
+                    className="h-4 w-4 border-neutral-300 text-emerald-500"
+                  />
+                  <span>Yes — admitted to Cohort 1</span>
+                </label>
+                <label
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm ${
+                    !participatedInCohort1
+                      ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200"
+                      : "border-neutral-200 bg-neutral-100/60 text-neutral-500 dark:border-neutral-800 dark:bg-neutral-900/40"
+                  } opacity-90`}
+                >
+                  <input
+                    type="radio"
+                    name="participatedInCohort1"
+                    checked={participatedInCohort1 === false}
+                    disabled
+                    readOnly
+                    className="h-4 w-4 border-neutral-300 text-emerald-500"
+                  />
+                  <span>No — Cohort 2 only</span>
+                </label>
+              </div>
+              <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
+                Pulled from your application — not editable here. Lets us
+                analyse Cohort 2 outcomes separately for returning participants.
+              </p>
+            </Field>
+          ) : null}
         </fieldset>
 
         {/* ----------------------------------------------------------------

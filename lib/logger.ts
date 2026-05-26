@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -10,6 +11,8 @@
  * Provides structured logging for API requests and responses.
  * In production, consider integrating with a logging service (e.g., Sentry, LogRocket, etc.)
  */
+
+import { getClientIp } from "./client-ip";
 
 export enum LogLevel {
   DEBUG = "DEBUG",
@@ -33,10 +36,6 @@ interface LogEntry {
 }
 
 class Logger {
-  private get isProduction(): boolean {
-    return process.env.NODE_ENV === "production";
-  }
-
   private get isDevelopment(): boolean {
     return process.env.NODE_ENV === "development";
   }
@@ -97,10 +96,50 @@ class Logger {
         console.log(formatted);
     }
 
-    // In production, you might want to send logs to an external service
-    if (this.isProduction && level === LogLevel.ERROR) {
-      // Example: Send to error tracking service
-      // errorTrackingService.captureException(new Error(message), { extra: metadata });
+    // Forward errors to Sentry when configured. The dynamic import is
+    // intentionally lazy and gated on env so:
+    //   - Tests never pull `@sentry/nextjs` into jsdom (it has heavy
+    //     OpenTelemetry deps that misbehave in jest).
+    //   - The package isn't a hard dependency — `npm install @sentry/nextjs`
+    //     and setting SENTRY_DSN activates it; absent either, this is a
+    //     no-op and the error still hits console.
+    if (level === LogLevel.ERROR) {
+      void this.forwardToSentry(message, metadata);
+    }
+  }
+
+  /**
+   * Send the error to Sentry if the SDK and DSN are both available.
+   * Tags are derived from common metadata keys (`area`, `endpoint`, `step`)
+   * so dashboards can filter by feature surface (e.g. account-deletion,
+   * community-safety, react-boundary).
+   */
+  private async forwardToSentry(
+    message: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void> {
+    if (!process.env.SENTRY_DSN) return;
+    if (process.env.NODE_ENV === "test") return;
+    try {
+      const sentryMod: unknown = await import(
+        /* @vite-ignore */ /* webpackIgnore: true */ "@sentry/nextjs"
+      ).catch(() => null);
+      const captureException = (sentryMod as {
+        captureException?: (err: Error, ctx: { tags: Record<string, string>; extra?: unknown }) => void;
+      } | null)?.captureException;
+      if (typeof captureException !== "function") return;
+
+      const tags: Record<string, string> = {};
+      if (metadata && typeof metadata.area === "string") tags.area = metadata.area;
+      if (metadata && typeof metadata.endpoint === "string") tags.endpoint = metadata.endpoint;
+      if (metadata && typeof metadata.step === "string") tags.step = metadata.step;
+
+      captureException(new Error(message), {
+        tags,
+        extra: scrubPii(metadata),
+      });
+    } catch {
+      // Never let observability break the request.
     }
   }
 
@@ -137,12 +176,8 @@ class Logger {
       duration,
     };
 
-    // Get client IP
-    const forwarded = request.headers.get("x-forwarded-for");
-    const realIp = request.headers.get("x-real-ip");
-    const cfConnectingIp = request.headers.get("cf-connecting-ip");
-    const ip = forwarded?.split(",")[0]?.trim() || realIp || cfConnectingIp;
-    if (ip) {
+    const ip = getClientIp(request);
+    if (ip !== "unknown") {
       metadata.ip = ip;
     }
 
@@ -168,7 +203,7 @@ class Logger {
       path: url.pathname,
       statusCode: response.status,
       duration,
-      ip: ip || undefined,
+      ip: ip !== "unknown" ? ip : undefined,
       userAgent: userAgent || undefined,
     };
 
@@ -241,6 +276,43 @@ class Logger {
       .replace(/\/Users\/[^\/\s]+/g, "/Users/[REDACTED]")
       .replace(/\/home\/[^\/\s]+/g, "/home/[REDACTED]");
   }
+}
+
+/**
+ * Drop or redact common PII keys before sending to Sentry. The keys
+ * here mirror the fields that the existing `sanitizeErrorMessage`
+ * regex strips from message text. Keep this list in sync with that
+ * function.
+ */
+function scrubPii(input: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!input) return undefined;
+  const SENSITIVE_KEYS = [
+    "email",
+    "password",
+    "token",
+    "secret",
+    "apiKey",
+    "firebaseToken",
+    "authorization",
+    "cookie",
+  ];
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    const lower = k.toLowerCase();
+    const isSensitive = SENSITIVE_KEYS.some((s) => lower.includes(s.toLowerCase()));
+    if (isSensitive) {
+      out[k] = "[REDACTED]";
+    } else if (typeof v === "string") {
+      // Re-use the existing message scrubber so embedded tokens get caught.
+      // (We can't call the private method statically; mirror the patterns.)
+      out[k] = v
+        .replace(/Bearer\s+[A-Za-z0-9\-_.]+/gi, "Bearer [REDACTED]")
+        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[EMAIL_REDACTED]");
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 // Export singleton instance

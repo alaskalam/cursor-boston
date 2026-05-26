@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -8,12 +9,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUser } from "@/lib/server-auth";
 import { getQuestionsService } from "@/lib/questions/service";
 import { logger } from "@/lib/logger";
-import { parseRequestBody } from "@/lib/api-response";
 import { getClientIdentifier } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
 import { sanitizeText } from "@/lib/sanitize";
 import { getDisplayName } from "@/lib/utils";
 import { QUESTION_TAGS, type QuestionTag } from "@/types/questions";
+import { questionsContract } from "@/lib/api-schemas/questions";
+import {
+  QUESTION_BODY_RANGE_ERROR,
+  QUESTION_TITLE_RANGE_ERROR,
+} from "@/lib/error-messages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,33 +41,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const bodyOrError = await parseRequestBody(request);
-    if (bodyOrError instanceof NextResponse) return bodyOrError;
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
+    }
+    const parsed = questionsContract.post.body.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
 
-    const { title, body, tags } = bodyOrError as {
-      title?: string;
-      body?: string;
-      tags?: string[];
-    };
-
-    const sanitizedTitle = sanitizeText(title ?? "");
-    const sanitizedBody = sanitizeText(body ?? "");
+    // Sanitize title/body; sanitization can shorten content so re-check length.
+    const sanitizedTitle = sanitizeText(parsed.data.title);
+    const sanitizedBody = sanitizeText(parsed.data.body);
 
     if (sanitizedTitle.length < 10 || sanitizedTitle.length > 200) {
       return NextResponse.json(
-        { error: "Title must be between 10 and 200 characters" },
+        { error: QUESTION_TITLE_RANGE_ERROR },
         { status: 400 }
       );
     }
 
     if (sanitizedBody.length < 20 || sanitizedBody.length > 5000) {
       return NextResponse.json(
-        { error: "Body must be between 20 and 5000 characters" },
+        { error: QUESTION_BODY_RANGE_ERROR },
         { status: 400 }
       );
     }
 
-    const validTags = (tags ?? [])
+    const validTags = (parsed.data.tags ?? [])
       .filter((t): t is QuestionTag => (QUESTION_TAGS as readonly string[]).includes(t))
       .slice(0, 10);
 

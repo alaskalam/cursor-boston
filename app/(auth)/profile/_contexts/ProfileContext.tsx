@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -19,6 +20,7 @@ import { useDiscordConnection } from "../_hooks/useDiscordConnection";
 import { useGithubConnection } from "../_hooks/useGithubConnection";
 import { useGoogleConnection } from "../_hooks/useGoogleConnection";
 import { useLudwittConnection } from "../_hooks/useLudwittConnection";
+import { useCursorConnection } from "../_hooks/useCursorConnection";
 import { useMfaEnrollment } from "../_hooks/useMfaEnrollment";
 import { useEmailManagement } from "../_hooks/useEmailManagement";
 import { useProfileSettings } from "../_hooks/useProfileSettings";
@@ -41,6 +43,7 @@ export interface ProfileContextValue {
   discord: ReturnType<typeof useDiscordConnection>;
   github: ReturnType<typeof useGithubConnection>;
   ludwitt: ReturnType<typeof useLudwittConnection>;
+  cursor: ReturnType<typeof useCursorConnection>;
   google: ReturnType<typeof useGoogleConnection>;
   mfa: ReturnType<typeof useMfaEnrollment>;
   email: ReturnType<typeof useEmailManagement>;
@@ -92,6 +95,11 @@ export function ProfileProvider({
   const ludwitt = useLudwittConnection(
     user,
     userProfile?.ludwitt,
+    refreshUserProfile
+  );
+  const cursor = useCursorConnection(
+    user,
+    userProfile?.cursor,
     refreshUserProfile
   );
   const google = useGoogleConnection(user);
@@ -160,6 +168,7 @@ export function ProfileProvider({
     discord,
     github,
     ludwitt,
+    cursor,
     google,
     mfa,
     email: emailMgmt,

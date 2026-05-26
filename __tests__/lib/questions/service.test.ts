@@ -241,6 +241,24 @@ describe("QuestionsService", () => {
       expect(result.downCount).toBe(1);
     });
 
+    it("throws UnauthorizedError when voting on own content", async () => {
+      mockRunTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          get: jest.fn()
+            .mockResolvedValueOnce({
+              exists: true,
+              data: () => ({ authorId: "u1", upCount: 0, downCount: 0 }),
+            })
+            .mockResolvedValueOnce({ exists: false }),
+        };
+        return fn(tx);
+      });
+
+      await expect(service.vote("question", "q1", "u1", "up")).rejects.toThrow(
+        UnauthorizedError
+      );
+    });
+
     it("throws QuestionNotFoundError when target does not exist", async () => {
       mockRunTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
         const tx = {
@@ -269,6 +287,50 @@ describe("QuestionsService", () => {
 
       const votes = await service.getUserVotes("u1");
       expect(votes).toEqual({ q1: "up", a1: "down" });
+    });
+  });
+
+  describe("getRelatedCookbookEntries", () => {
+    it("returns empty array without querying when tags are empty", async () => {
+      const result = await service.getRelatedCookbookEntries([]);
+      expect(result).toEqual([]);
+      expect(mockDb.collection).not.toHaveBeenCalledWith("cookbook_entries");
+    });
+
+    it("returns mapped cookbook entries for matching tags", async () => {
+      const createdAt = { toDate: () => new Date("2026-05-01T12:00:00.000Z") };
+      mockQueryGet.mockResolvedValueOnce({
+        docs: [
+          {
+            id: "entry-1",
+            data: () => ({
+              title: "Prompting for analysis",
+              description: "Cookbook example",
+              promptContent: "Use this prompt",
+              category: "analysis",
+              tags: ["python", "data"],
+              worksWith: ["Cursor", "Jupyter"],
+              authorId: "u1",
+              authorDisplayName: "Maintainer",
+              createdAt,
+              upCount: 4,
+              downCount: 1,
+            }),
+          },
+        ],
+      });
+
+      const result = await service.getRelatedCookbookEntries(["python", "data"], 3);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        id: "entry-1",
+        title: "Prompting for analysis",
+        category: "analysis",
+        upCount: 4,
+        downCount: 1,
+      });
+      expect(mockDb.collection).toHaveBeenCalledWith("cookbook_entries");
     });
   });
 

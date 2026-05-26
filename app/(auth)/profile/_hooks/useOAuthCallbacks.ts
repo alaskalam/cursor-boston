@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -12,6 +13,7 @@ import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.
 import type { useDiscordConnection } from "./useDiscordConnection";
 import type { useGithubConnection } from "./useGithubConnection";
 import type { useLudwittConnection } from "./useLudwittConnection";
+import type { useCursorConnection } from "./useCursorConnection";
 import type { useEmailManagement } from "./useEmailManagement";
 import type { Tab } from "../_types";
 
@@ -22,6 +24,7 @@ interface OAuthCallbackDeps {
   discord: ReturnType<typeof useDiscordConnection>;
   github: ReturnType<typeof useGithubConnection>;
   ludwitt: ReturnType<typeof useLudwittConnection>;
+  cursor: ReturnType<typeof useCursorConnection>;
   email: ReturnType<typeof useEmailManagement>;
   refreshUserProfile: () => Promise<void>;
   setActiveTab: (tab: Tab) => void;
@@ -34,6 +37,7 @@ export function useOAuthCallbacks({
   discord,
   github,
   ludwitt,
+  cursor,
   email,
   refreshUserProfile,
   setActiveTab,
@@ -59,7 +63,11 @@ export function useOAuthCallbacks({
       if (githubStatus === "success" && data) {
         github.handleOAuthSuccess(JSON.parse(decodeURIComponent(data)));
       } else if (githubStatus === "error") {
-        github.handleOAuthError();
+        // Pass through the specific failure code (parity with the Discord
+        // branch). useGithubConnection.handleOAuthError maps it via
+        // describeOAuthError so users see the actual reason instead of
+        // a generic "failed to connect" line.
+        github.handleOAuthError(searchParams.get("message"));
       }
     }
 
@@ -69,6 +77,13 @@ export function useOAuthCallbacks({
       ludwitt.handleOAuthSuccess();
     } else if (ludwittStatus === "error") {
       ludwitt.handleOAuthError(searchParams.get("message"));
+    }
+
+    const cursorStatus = searchParams.get("cursor");
+    if (cursorStatus === "success") {
+      cursor.handleOAuthSuccess();
+    } else if (cursorStatus === "error") {
+      cursor.handleOAuthError(searchParams.get("message"));
     }
 
     // Email verification callback

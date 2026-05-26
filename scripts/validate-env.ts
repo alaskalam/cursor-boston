@@ -17,6 +17,7 @@ loadEnvConfig(process.cwd());
 interface EnvVar {
   name: string;
   required: boolean;
+  requiredWhen?: () => boolean;
   description?: string;
   validate?: (value: string) => boolean | string;
 }
@@ -64,6 +65,26 @@ const requiredEnvVars: EnvVar[] = [
     required: true,
     description: "Firebase Database URL",
     validate: (value) => !value.includes("your-project") || "Must be set to actual Firebase database URL",
+  },
+  {
+    name: "UNSUBSCRIBE_SECRET",
+    required: false,
+    requiredWhen: () =>
+      process.env.NODE_ENV !== "development" && process.env.NODE_ENV !== "test",
+    description: "HMAC secret for unsubscribe and withdraw links",
+    validate: (value) => {
+      const secret = value.trim();
+      if (secret === "cursor-boston-unsub") {
+        return "Must not use the legacy public fallback secret";
+      }
+      if (secret.includes("your-")) {
+        return "Must be set to an actual unsubscribe secret";
+      }
+      if (Buffer.byteLength(secret, "utf8") < 32) {
+        return "Must be at least 32 bytes";
+      }
+      return true;
+    },
   },
 ];
 
@@ -149,6 +170,12 @@ const optionalEnvVars: EnvVar[] = [
     required: false,
     description: "Admin Email for notifications",
   },
+  {
+    name: "SUMMER_COHORT_ADMIN_EMAILS",
+    required: false,
+    description:
+      "CSV of lowercase emails allowed to view /admin/summer-cohort and call /api/summer-cohort/admin/*",
+  },
   // Mailgun (OPTIONAL - for sending emails)
   {
     name: "MAILGUN_API_KEY",
@@ -164,8 +191,9 @@ const optionalEnvVars: EnvVar[] = [
 
 function validateEnvVar(envVar: EnvVar): { valid: boolean; error?: string } {
   const value = process.env[envVar.name];
+  const required = isEnvVarRequired(envVar);
 
-  if (envVar.required) {
+  if (required) {
     if (!value || value.trim() === "") {
       return {
         valid: false,
@@ -186,7 +214,23 @@ function validateEnvVar(envVar: EnvVar): { valid: boolean; error?: string } {
     }
   }
 
+  if (!required && value && value.trim() !== "" && envVar.validate) {
+    const validationResult = envVar.validate(value);
+    if (validationResult !== true) {
+      return {
+        valid: false,
+        error: typeof validationResult === "string"
+          ? validationResult
+          : `Invalid value for ${envVar.name}`,
+      };
+    }
+  }
+
   return { valid: true };
+}
+
+function isEnvVarRequired(envVar: EnvVar): boolean {
+  return envVar.required || envVar.requiredWhen?.() === true;
 }
 
 function main() {
@@ -199,8 +243,14 @@ function main() {
   console.log("📋 Checking required variables:");
   for (const envVar of requiredEnvVars) {
     const result = validateEnvVar(envVar);
+    const value = process.env[envVar.name];
+    const required = isEnvVarRequired(envVar);
     if (result.valid) {
-      console.log(`  ✅ ${envVar.name}`);
+      if (!required && (!value || value.trim() === "")) {
+        console.log(`  ⚠️  ${envVar.name} (not set - optional in this environment)`);
+      } else {
+        console.log(`  ✅ ${envVar.name}`);
+      }
     } else {
       console.log(`  ❌ ${envVar.name}: ${result.error}`);
       errors.push(result.error || `${envVar.name} is invalid`);

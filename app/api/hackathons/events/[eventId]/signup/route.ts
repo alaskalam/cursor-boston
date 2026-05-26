@@ -1,12 +1,11 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { unstable_cache, revalidateTag } from "next/cache";
-import type { DocumentData, Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase-admin";
 import {
@@ -14,495 +13,22 @@ import {
   getOptionalVerifiedUser,
 } from "@/lib/server-auth";
 import {
-  getConfirmedCapacityForEvent,
-  getDeclinedEmailsForEvent,
   getHackathonEventSignupBlockReason,
-  getJudgeEmailsForEvent,
   hackathonEventSignupDocId,
   isHackathonEventSignupId,
 } from "@/lib/hackathon-event-signup";
-import { fetchMergedPrCountsForLogins } from "@/lib/github-merged-pr-count";
-import { getGithubRepoPair } from "@/lib/github-recent-merged-prs";
 import { getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
-import { SUMMER_COHORT_COLLECTION } from "@/lib/summer-cohort";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
+import {
+  getSnapshotOrRefresh,
+  refreshSnapshot,
+} from "@/lib/hackathon-leaderboard-snapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const RATE = rateLimitConfigs.hackathonEventSignup;
-
-/**
- * Cache tag for the signup leaderboard payload. Bust it from POST/PATCH/DELETE
- * so mutations are visible on the next GET instead of waiting out the 30s
- * revalidate window. Shared across all events — fine at current scale (2
- * active event ids); split into `:${eventId}` if that ever grows.
- */
-const HACKATHON_SIGNUP_CACHE_TAG = "hackathon-event-signup";
-
-function signedUpAtToMs(value: unknown): number {
-  if (
-    value &&
-    typeof value === "object" &&
-    "toMillis" in value &&
-    typeof (value as { toMillis: () => number }).toMillis === "function"
-  ) {
-    return (value as { toMillis: () => number }).toMillis();
-  }
-  if (value instanceof Date) return value.getTime();
-  return 0;
-}
-
-async function fetchUserDataMap(
-  db: Firestore,
-  userIds: string[]
-): Promise<Map<string, DocumentData>> {
-  const map = new Map<string, DocumentData>();
-  const unique = [...new Set(userIds)];
-  const chunks: string[][] = [];
-  for (let i = 0; i < unique.length; i += 10) {
-    chunks.push(unique.slice(i, i + 10));
-  }
-  const chunkResults = await Promise.all(
-    chunks.map((chunk) => {
-      const refs = chunk.map((id) => db.collection("users").doc(id));
-      return db.getAll(...refs);
-    })
-  );
-  for (const snaps of chunkResults) {
-    snaps.forEach((s) => {
-      if (s.exists) {
-        map.set(s.id, s.data() ?? {});
-      }
-    });
-  }
-  return map;
-}
-
-/** Firestore `in` queries are limited to 10 values. */
-const USER_ID_IN_CHUNK = 10;
-
-/**
- * Merged PR counts from pullRequests (same source as contributor badges), not users.pullRequestsCount.
- */
-async function countMergedCommunityPrsByUserIds(
-  db: Firestore,
-  userIds: string[]
-): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  const unique = [...new Set(userIds.filter(Boolean))];
-  for (const id of unique) counts.set(id, 0);
-  if (unique.length === 0) return counts;
-
-  const { owner, repo } = getGithubRepoPair();
-  const expectedRepo = `${owner}/${repo}`;
-
-  const chunks: string[][] = [];
-  for (let i = 0; i < unique.length; i += USER_ID_IN_CHUNK) {
-    chunks.push(unique.slice(i, i + USER_ID_IN_CHUNK));
-  }
-  const chunkSnaps = await Promise.all(
-    chunks.map((chunk) =>
-      db
-        .collection("pullRequests")
-        .where("userId", "in", chunk)
-        .where("state", "==", "merged")
-        .get()
-    )
-  );
-  for (const snap of chunkSnaps) {
-    for (const doc of snap.docs) {
-      const data = doc.data();
-      const uid = data.userId as string | undefined;
-      if (!uid) continue;
-      const repoField = data.repository;
-      if (
-        typeof repoField === "string" &&
-        repoField.length > 0 &&
-        repoField !== expectedRepo
-      ) {
-        continue;
-      }
-      counts.set(uid, (counts.get(uid) ?? 0) + 1);
-    }
-  }
-
-  return counts;
-}
-
-type EntryStatus = "confirmed" | "waitlisted";
-
-type LeaderboardEntry = {
-  rank: number;
-  userId: string | null;
-  displayName: string | null;
-  githubLogin: string | null;
-  mergedPrCount: number;
-  signedUpAt: string;
-  creditEligible: boolean;
-  status: EntryStatus;
-  checkedIn: boolean;
-  willBeLate: boolean;
-  queuingForSpot: boolean;
-  lumaRegistered: boolean;
-  /** True when the email matches a Cohort-1 application (status pending/admitted). */
-  isCohort1: boolean;
-};
-
-type LeaderboardPayload = {
-  entries: LeaderboardEntry[];
-  totalCount: number;
-  websiteSignupCount: number;
-  creditTopN: number;
-};
-
-/**
- * Uncached body of the leaderboard load. Pulled out of the GET handler so
- * `unstable_cache` can collapse N concurrent page loads (e.g., after an email
- * blast) into one Firestore pass per 30s. `me` is computed on top of this by
- * the handler since it varies per-caller and shouldn't be cached.
- */
-async function buildLeaderboardPayload(eventId: string): Promise<LeaderboardPayload> {
-  const db = getAdminDb();
-  if (!db) throw new Error("Server not configured");
-
-  const judgeEmails = getJudgeEmailsForEvent(eventId);
-  const declinedEmails = getDeclinedEmailsForEvent(eventId);
-
-  // Cohort-1 applicant emails (status pending/admitted only). Used to push
-  // cohort-1 attendees to the top of this event's leaderboard, since the
-  // May 26 immersion is the in-person event for the summer cohort.
-  const cohort1Emails = new Set<string>();
-  const cohortAppsSnap = await db.collection(SUMMER_COHORT_COLLECTION).get();
-  for (const doc of cohortAppsSnap.docs) {
-    const d = doc.data();
-    const cohorts = Array.isArray(d.cohorts) ? d.cohorts : [];
-    if (!cohorts.includes("cohort-1")) continue;
-    const status = typeof d.status === "string" ? d.status : "pending";
-    if (status !== "pending" && status !== "admitted") continue;
-    const email = typeof d.email === "string" ? d.email.trim().toLowerCase() : "";
-    if (email) cohort1Emails.add(email);
-  }
-
-  const snap = await db
-    .collection("hackathonEventSignups")
-    .where("eventId", "==", eventId)
-    .get();
-
-    const rows: {
-      userId: string;
-      signedUpAtMs: number;
-      mergedPrCount: number;
-      displayName: string | null;
-      githubLogin: string | null;
-      confirmedAt: number | null;
-      frozenRank: number | null;
-      frozenPrCount: number | null;
-      checkedInAt: number | null;
-      willBeLate: boolean;
-      queuingForSpot: boolean;
-      /** True when a matching row was found in hackathonLumaRegistrants (email or githubLogin match). */
-      lumaRegistered: boolean;
-    }[] = [];
-
-    const userIds = snap.docs.map((d) => d.data().userId as string).filter(Boolean);
-    // Phase 1: load user profiles. We need profile.github.login to decide
-    // whether to hit the GitHub API (primary) or the Firestore pullRequests
-    // fallback (for the rare user with no linked GitHub). Signup gate already
-    // blocks users without linked GitHub from posting, so the fallback set is
-    // usually empty in practice.
-    const userMap = await fetchUserDataMap(db, userIds);
-
-    const githubLogins: string[] = [];
-    const userIdsWithoutGithub: string[] = [];
-    for (const uid of userIds) {
-      const profile = userMap.get(uid);
-      const login =
-        profile?.github && typeof profile.github === "object"
-          ? (profile.github as { login?: string }).login
-          : undefined;
-      if (typeof login === "string" && login.trim()) {
-        githubLogins.push(login.trim());
-      } else {
-        userIdsWithoutGithub.push(uid);
-      }
-    }
-
-    // Phase 2: GitHub + Firestore pullRequests fan out in parallel, but the
-    // Firestore scan is now scoped to only users whose profile has no linked
-    // GitHub login (so a hack-a-sprint-scale event skips ~40 users' worth of
-    // pullRequests reads per page load).
-    const [githubMergedByLogin, firestoreMergedCounts] = await Promise.all([
-      fetchMergedPrCountsForLogins(githubLogins),
-      userIdsWithoutGithub.length > 0
-        ? countMergedCommunityPrsByUserIds(db, userIdsWithoutGithub)
-        : Promise.resolve(new Map<string, number>()),
-    ]);
-
-    for (const doc of snap.docs) {
-      const data = doc.data();
-      const userId = data.userId as string;
-      if (!userId) continue;
-      const profile = userMap.get(userId);
-      if (
-        typeof profile?.email === "string" &&
-        declinedEmails.has(profile.email.toLowerCase())
-      ) {
-        continue;
-      }
-      const gh =
-        profile?.github && typeof profile.github === "object"
-          ? (profile.github as { login?: string }).login
-          : undefined;
-      const githubLogin = typeof gh === "string" ? gh : null;
-      let pr = firestoreMergedCounts.get(userId) ?? 0;
-      if (githubLogin) {
-        const fromApi = githubMergedByLogin.get(githubLogin.toLowerCase());
-        if (fromApi !== undefined) pr = fromApi;
-      }
-      rows.push({
-        userId,
-        signedUpAtMs: signedUpAtToMs(data.signedUpAt),
-        mergedPrCount: pr,
-        displayName:
-          typeof profile?.displayName === "string" ? profile.displayName : null,
-        githubLogin,
-        confirmedAt: data.confirmedAt ? signedUpAtToMs(data.confirmedAt) : null,
-        frozenRank: typeof data.frozenRank === "number" ? data.frozenRank : null,
-        frozenPrCount: typeof data.frozenPrCount === "number" ? data.frozenPrCount : null,
-        checkedInAt: data.checkedInAt ? signedUpAtToMs(data.checkedInAt) : null,
-        willBeLate: data.willBeLate === true,
-        queuingForSpot: data.queuingForSpot === true,
-        lumaRegistered: false, // flipped true below when the Luma loop finds a match
-      });
-    }
-
-    // Build a set of emails/logins already on the website list to deduplicate
-    const websiteEmails = new Set<string>();
-    const websiteGithubLogins = new Set<string>();
-    for (const uid of userIds) {
-      const profile = userMap.get(uid);
-      if (typeof profile?.email === "string") websiteEmails.add(profile.email.toLowerCase());
-      const gh = profile?.github && typeof profile.github === "object"
-        ? (profile.github as { login?: string }).login : undefined;
-      if (typeof gh === "string" && gh.trim()) websiteGithubLogins.add(gh.trim().toLowerCase());
-    }
-
-    // Reverse-lookup maps: email/githubLogin → rows index (for merging Luma fields)
-    const emailToRowIdx = new Map<string, number>();
-    const ghLoginToRowIdx = new Map<string, number>();
-    for (let i = 0; i < rows.length; i++) {
-      const profile = userMap.get(rows[i].userId);
-      if (typeof profile?.email === "string") {
-        emailToRowIdx.set(profile.email.toLowerCase(), i);
-      }
-      const gh = profile?.github && typeof profile.github === "object"
-        ? (profile.github as { login?: string }).login : undefined;
-      if (typeof gh === "string" && gh.trim()) {
-        ghLoginToRowIdx.set(gh.trim().toLowerCase(), i);
-      }
-    }
-
-    // Fetch Luma-only registrants
-    const lumaSnap = await db
-      .collection("hackathonLumaRegistrants")
-      .where("eventId", "==", eventId)
-      .get();
-
-    const lumaGithubLogins: string[] = [];
-    type LumaRow = {
-      name: string;
-      email: string | null;
-      githubLogin: string | null;
-      lumaCreatedAt: string;
-      mergedPrCount: number;
-      confirmedAt: number | null;
-      frozenRank: number | null;
-      frozenPrCount: number | null;
-    };
-    const lumaRows: LumaRow[] = [];
-
-    for (const doc of lumaSnap.docs) {
-      const d = doc.data();
-      const email = (d.email as string || "").toLowerCase();
-      const ghLogin = typeof d.githubLogin === "string" ? d.githubLogin : null;
-      if (judgeEmails.has(email) || declinedEmails.has(email)) continue;
-
-      // When a Luma registrant also signed up on the website, carry over
-      // confirmed status from the Luma record so it isn't lost.
-      // Also preserve the earlier signup time so waitlist ordering stays stable.
-      const matchIdx = websiteEmails.has(email)
-        ? emailToRowIdx.get(email)
-        : (ghLogin && websiteGithubLogins.has(ghLogin.toLowerCase()))
-          ? ghLoginToRowIdx.get(ghLogin.toLowerCase())
-          : undefined;
-      if (matchIdx !== undefined) {
-        rows[matchIdx].lumaRegistered = true;
-        if (rows[matchIdx].confirmedAt == null && d.confirmedAt) {
-          rows[matchIdx].confirmedAt = signedUpAtToMs(d.confirmedAt);
-        }
-        if (rows[matchIdx].frozenRank == null && typeof d.frozenRank === "number") {
-          rows[matchIdx].frozenRank = d.frozenRank;
-        }
-        if (rows[matchIdx].frozenPrCount == null && typeof d.frozenPrCount === "number") {
-          rows[matchIdx].frozenPrCount = d.frozenPrCount;
-        }
-        const lumaMs = d.lumaCreatedAt ? new Date(d.lumaCreatedAt as string).getTime() : 0;
-        if (lumaMs > 0 && lumaMs < rows[matchIdx].signedUpAtMs) {
-          rows[matchIdx].signedUpAtMs = lumaMs;
-        }
-        continue;
-      }
-      if (ghLogin) lumaGithubLogins.push(ghLogin);
-      lumaRows.push({
-        name: typeof d.name === "string" ? d.name : "",
-        email: email || null,
-        githubLogin: ghLogin,
-        lumaCreatedAt: typeof d.lumaCreatedAt === "string" ? d.lumaCreatedAt : "",
-        mergedPrCount: 0,
-        confirmedAt: d.confirmedAt ? signedUpAtToMs(d.confirmedAt) : null,
-        frozenRank: typeof d.frozenRank === "number" ? d.frozenRank : null,
-        frozenPrCount: typeof d.frozenPrCount === "number" ? d.frozenPrCount : null,
-      });
-    }
-
-    // Look up PR counts for Luma-only registrants
-    if (lumaGithubLogins.length > 0) {
-      const lumaPrCounts = await fetchMergedPrCountsForLogins(lumaGithubLogins);
-      for (const lr of lumaRows) {
-        if (lr.githubLogin) {
-          const count = lumaPrCounts.get(lr.githubLogin.toLowerCase());
-          if (count !== undefined) lr.mergedPrCount = count;
-        }
-      }
-    }
-
-    type UnifiedRow = {
-      userId: string | null;
-      displayName: string | null;
-      githubLogin: string | null;
-      mergedPrCount: number;
-      signedUpAtMs: number;
-      signedUpAtIso: string;
-      confirmedAt: number | null;
-      frozenRank: number | null;
-      frozenPrCount: number | null;
-      checkedInAt: number | null;
-      willBeLate: boolean;
-      queuingForSpot: boolean;
-      lumaRegistered: boolean;
-      isCohort1: boolean;
-    };
-    const unified: UnifiedRow[] = [];
-
-    for (const r of rows) {
-      const profile = userMap.get(r.userId);
-      const email =
-        typeof profile?.email === "string" ? profile.email.trim().toLowerCase() : "";
-      unified.push({
-        userId: r.userId,
-        displayName: r.displayName,
-        githubLogin: r.githubLogin,
-        mergedPrCount: r.mergedPrCount,
-        signedUpAtMs: r.signedUpAtMs,
-        signedUpAtIso: new Date(r.signedUpAtMs).toISOString(),
-        confirmedAt: r.confirmedAt,
-        frozenRank: r.frozenRank,
-        frozenPrCount: r.frozenPrCount,
-        checkedInAt: r.checkedInAt,
-        willBeLate: r.willBeLate,
-        queuingForSpot: r.queuingForSpot,
-        lumaRegistered: r.lumaRegistered,
-        isCohort1: email ? cohort1Emails.has(email) : false,
-      });
-    }
-    for (const lr of lumaRows) {
-      const email = lr.email?.trim().toLowerCase() ?? "";
-      unified.push({
-        userId: null,
-        displayName: lr.name || null,
-        githubLogin: lr.githubLogin,
-        mergedPrCount: lr.mergedPrCount,
-        signedUpAtMs: lr.lumaCreatedAt ? new Date(lr.lumaCreatedAt).getTime() : 0,
-        signedUpAtIso: lr.lumaCreatedAt,
-        confirmedAt: lr.confirmedAt,
-        frozenRank: typeof lr.frozenRank === "number" ? lr.frozenRank : null,
-        frozenPrCount: typeof lr.frozenPrCount === "number" ? lr.frozenPrCount : null,
-        checkedInAt: null,
-        willBeLate: false,
-        queuingForSpot: false,
-        // Rows with no matching website signup came from the Luma collection directly —
-        // they're on Luma by definition.
-        lumaRegistered: true,
-        isCohort1: email ? cohort1Emails.has(email) : false,
-      });
-    }
-
-    // Split into confirmed (frozen rank) and waitlisted (live PRs)
-    const confirmed = unified.filter((u) => u.confirmedAt != null);
-    const waitlisted = unified.filter((u) => u.confirmedAt == null);
-
-    // Confirmed: cohort-1 first, then frozen rank, then PRs desc → time asc.
-    // Once frozen, cohort-1 still trumps the snapshot order so the leaderboard
-    // visibly prioritizes cohort builders for the May 26 immersion.
-    confirmed.sort((a, b) => {
-      if (a.isCohort1 !== b.isCohort1) return a.isCohort1 ? -1 : 1;
-      if (a.frozenRank != null && b.frozenRank != null) return a.frozenRank - b.frozenRank;
-      if (a.frozenRank != null) return -1;
-      if (b.frozenRank != null) return 1;
-      if (b.mergedPrCount !== a.mergedPrCount) return b.mergedPrCount - a.mergedPrCount;
-      return a.signedUpAtMs - b.signedUpAtMs;
-    });
-
-    // Waitlisted: cohort-1 first, then PRs desc, then signup time asc.
-    waitlisted.sort((a, b) => {
-      if (a.isCohort1 !== b.isCohort1) return a.isCohort1 ? -1 : 1;
-      if (b.mergedPrCount !== a.mergedPrCount) return b.mergedPrCount - a.mergedPrCount;
-      return a.signedUpAtMs - b.signedUpAtMs;
-    });
-
-    const sorted = [...confirmed, ...waitlisted];
-
-    const websiteCount = rows.length;
-    const entries: LeaderboardEntry[] = sorted.map((u, i) => {
-      const rank = i + 1;
-      const isConfirmed = u.confirmedAt != null;
-      const displayPrs = isConfirmed && u.frozenPrCount != null ? u.frozenPrCount : u.mergedPrCount;
-      return {
-        rank,
-        userId: u.userId,
-        displayName: u.displayName,
-        githubLogin: u.githubLogin,
-        mergedPrCount: displayPrs,
-        signedUpAt: u.signedUpAtIso,
-        creditEligible: isConfirmed,
-        status: isConfirmed ? "confirmed" : "waitlisted",
-        checkedIn: u.checkedInAt != null,
-        willBeLate: u.willBeLate,
-        queuingForSpot: u.queuingForSpot,
-        lumaRegistered: u.lumaRegistered,
-        isCohort1: u.isCohort1,
-      };
-    });
-
-    return {
-      entries,
-      totalCount: entries.length,
-      websiteSignupCount: websiteCount,
-      creditTopN: getConfirmedCapacityForEvent(eventId),
-    };
-}
-
-/**
- * 30s cache around the Firestore + GitHub work. Bust with
- * `revalidateTag(HACKATHON_SIGNUP_CACHE_TAG)` from mutations so the next GET
- * sees fresh data without waiting out the window.
- */
-const loadLeaderboardPayload = unstable_cache(
-  buildLeaderboardPayload,
-  ["hackathon-event-signup:leaderboard"],
-  { revalidate: 30, tags: [HACKATHON_SIGNUP_CACHE_TAG] }
-);
 
 type RouteContext = { params: Promise<{ eventId: string }> };
 
@@ -524,7 +50,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     }
 
     const meUser = await getOptionalVerifiedUser(request);
-    const payload = await loadLeaderboardPayload(eventId);
+    // Read the persisted snapshot. Mutations (POST/PATCH/DELETE below) refresh
+    // it inline, so this returns the post-mutation state on the next GET without
+    // re-running the Firestore + GitHub fan-out per page load.
+    const payload = await getSnapshotOrRefresh(eventId);
 
     let me: {
       signedUp: boolean;
@@ -535,6 +64,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
       willBeLate: boolean;
       queuingForSpot: boolean;
       lumaRegistered: boolean;
+      partifulRegistered: boolean;
+      attendingConfirmed: boolean;
+      attendingConfirmedAt: string | null;
+      attendanceRank: number | null;
+      tier: "A" | "B" | "C" | null;
+      inAttendanceBand: boolean;
+      inCreditBand: boolean;
+      hasSubmission: boolean;
     } | null = null;
 
     if (meUser) {
@@ -549,6 +86,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
             willBeLate: entry.willBeLate,
             queuingForSpot: entry.queuingForSpot,
             lumaRegistered: entry.lumaRegistered,
+            partifulRegistered: entry.partifulRegistered,
+            attendingConfirmed: entry.attendingConfirmed,
+            attendingConfirmedAt: entry.attendingConfirmedAt,
+            attendanceRank: entry.attendanceRank,
+            tier: entry.tier,
+            inAttendanceBand: entry.inAttendanceBand,
+            inCreditBand: entry.inCreditBand,
+            hasSubmission: entry.hasSubmission,
           }
         : {
             signedUp: false,
@@ -559,6 +104,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
             willBeLate: false,
             queuingForSpot: false,
             lumaRegistered: false,
+            partifulRegistered: false,
+            attendingConfirmed: false,
+            attendingConfirmedAt: null,
+            attendanceRank: null,
+            tier: null,
+            inAttendanceBand: false,
+            inCreditBand: false,
+            hasSubmission: false,
           };
     }
 
@@ -568,6 +121,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       websiteSignupCount: payload.websiteSignupCount,
       entries: payload.entries,
       creditTopN: payload.creditTopN,
+      confirmedAttendeeCount: payload.confirmedAttendeeCount,
+      attendanceLimit: payload.attendanceLimit,
       me,
     });
   } catch (e) {
@@ -631,7 +186,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       userId: user.uid,
       signedUpAt: FieldValue.serverTimestamp(),
     });
-    revalidateTag(HACKATHON_SIGNUP_CACHE_TAG, { expire: 0 });
+    // Block on snapshot refresh so the next GET reflects this claim.
+    await refreshSnapshot(eventId);
 
     return NextResponse.json({ signedUp: true }, { status: 200 });
   } catch (e) {
@@ -669,12 +225,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Unknown event" }, { status: 404 });
     }
 
-    let body: Record<string, unknown>;
+    let body: unknown;
     try {
-      body = (await request.json()) as Record<string, unknown>;
+      body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
     }
+    const parsed = hackathonsContract.eventSignupPatch.body.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
+    const parsedBody = parsed.data;
 
     const db = getAdminDb();
     if (!db) {
@@ -691,7 +255,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const data = snap.data() ?? {};
     const isConfirmed = Boolean(data.confirmedAt);
 
-    if (body.giveUpSpot === true) {
+    if (parsedBody.giveUpSpot === true) {
       if (!isConfirmed) {
         return NextResponse.json(
           { error: "Only confirmed attendees can give up their spot" },
@@ -703,39 +267,33 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         gaveUpSpotAt: FieldValue.serverTimestamp(),
         willBeLate: FieldValue.delete(),
       });
-      revalidateTag(HACKATHON_SIGNUP_CACHE_TAG, { expire: 0 });
+      await refreshSnapshot(eventId);
       return NextResponse.json({ ok: true, gaveUpSpot: true }, { status: 200 });
     }
 
     const patch: Record<string, unknown> = {};
-    if (Object.prototype.hasOwnProperty.call(body, "willBeLate")) {
-      if (typeof body.willBeLate !== "boolean") {
-        return NextResponse.json({ error: "willBeLate must be a boolean" }, { status: 400 });
-      }
-      if (body.willBeLate && !isConfirmed) {
+    if (parsedBody.willBeLate !== undefined) {
+      if (parsedBody.willBeLate && !isConfirmed) {
         return NextResponse.json(
           { error: "Only confirmed attendees can mark that they will be late" },
           { status: 400 }
         );
       }
-      if (body.willBeLate) {
+      if (parsedBody.willBeLate) {
         patch.willBeLate = true;
       } else {
         patch.willBeLate = FieldValue.delete();
       }
     }
 
-    if (Object.prototype.hasOwnProperty.call(body, "queuingForSpot")) {
-      if (typeof body.queuingForSpot !== "boolean") {
-        return NextResponse.json({ error: "queuingForSpot must be a boolean" }, { status: 400 });
-      }
-      if (body.queuingForSpot && isConfirmed) {
+    if (parsedBody.queuingForSpot !== undefined) {
+      if (parsedBody.queuingForSpot && isConfirmed) {
         return NextResponse.json(
           { error: "Waitlisted attendees only can mark that they will queue for a spot" },
           { status: 400 }
         );
       }
-      if (body.queuingForSpot) {
+      if (parsedBody.queuingForSpot) {
         patch.queuingForSpot = true;
       } else {
         patch.queuingForSpot = FieldValue.delete();
@@ -747,7 +305,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     await ref.update(patch);
-    revalidateTag(HACKATHON_SIGNUP_CACHE_TAG, { expire: 0 });
+    await refreshSnapshot(eventId);
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (e) {
@@ -785,7 +343,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const docId = hackathonEventSignupDocId(eventId, user.uid);
     await db.collection("hackathonEventSignups").doc(docId).delete().catch(() => undefined);
-    revalidateTag(HACKATHON_SIGNUP_CACHE_TAG, { expire: 0 });
+    await refreshSnapshot(eventId);
 
     return NextResponse.json({ left: true }, { status: 200 });
   } catch (e) {

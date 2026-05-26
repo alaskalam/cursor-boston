@@ -1,13 +1,15 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getVerifiedUser } from "@/lib/server-auth";
+import { getVerifiedUser, isCurrentIdTokenRevoked } from "@/lib/server-auth";
 import { sanitizeText } from "@/lib/sanitize";
 import { createLiveSessionServer } from "@/lib/live-sessions/data-server";
+import { liveContract } from "@/lib/api-schemas/live";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,14 +48,25 @@ export async function POST(request: NextRequest) {
     if (!user.isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    if (await isCurrentIdTokenRevoked(request)) {
+      return NextResponse.json(
+        { error: "Session revoked. Please sign in again." },
+        { status: 401 }
+      );
+    }
 
-    let body: { title?: unknown };
-    try {
-      body = (await request.json()) as { title?: unknown };
-    } catch {
+    const rawBody = await request.json().catch(() => null);
+    if (rawBody === null) {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-    const title = normalizeSessionTitle(body.title);
+    const parsedBody = liveContract.sessionCreate.body.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { error: `Title must be a string up to ${MAX_TITLE_LENGTH} characters` },
+        { status: 400 }
+      );
+    }
+    const title = normalizeSessionTitle(parsedBody.data.title);
 
     if (!title) {
       return NextResponse.json(

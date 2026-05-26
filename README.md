@@ -6,9 +6,15 @@
 </p>
 
 <p align="center">
+  <a href="https://www.bestpractices.dev/projects/12883/2"><img src="https://www.bestpractices.dev/projects/12883/badge?v=gold-2026-05-20" alt="OpenSSF Best Practices Gold" height="28" /></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/rogerSuperBuilderAlpha/cursor-boston/actions/workflows/ci.yml"><img src="https://github.com/rogerSuperBuilderAlpha/cursor-boston/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://codecov.io/gh/rogerSuperBuilderAlpha/cursor-boston"><img src="https://codecov.io/gh/rogerSuperBuilderAlpha/cursor-boston/branch/develop/graph/badge.svg" alt="Codecov" /></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/rogerSuperBuilderAlpha/cursor-boston"><img src="https://api.scorecard.dev/projects/github.com/rogerSuperBuilderAlpha/cursor-boston/badge" alt="OpenSSF Scorecard" /></a>
+  <a href="https://api.reuse.software/info/github.com/rogerSuperBuilderAlpha/cursor-boston"><img src="https://api.reuse.software/badge/github.com/rogerSuperBuilderAlpha/cursor-boston" alt="REUSE status" /></a>
+  <a href="https://github.com/rogerSuperBuilderAlpha/cursor-boston/releases/latest"><img src="https://img.shields.io/github/v/release/rogerSuperBuilderAlpha/cursor-boston?include_prereleases&sort=semver&label=release" alt="Latest release" /></a>
   <a href="https://github.com/rogerSuperBuilderAlpha/cursor-boston/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome" /></a>
   <a href="https://discord.gg/Wsncg8YYqc"><img src="https://img.shields.io/badge/Discord-Join%20Us-7289DA?logo=discord" alt="Discord" /></a>
   <a href="https://lu.ma/cursor-boston"><img src="https://img.shields.io/badge/Luma-Events-emerald" alt="Luma Events" /></a>
@@ -40,6 +46,15 @@
 ## 🏙️ What is Cursor Boston?
 
 Cursor Boston is a community-led platform designed to bring together the most ambitious developers, students, and founders in the Boston area. We focus on **AI-native development workflows**—leveraging tools like Cursor to ship production code at the speed of thought.
+
+### 🧩 Major programs
+
+- **[Summer Cohort](https://cursorboston.com/summer-cohort)** — 5-week intensive fellowship; weekly submissions land in long-lived submission branches (`c1w*-submission`, `c2w*-submission`).
+- **[Hackathons](https://cursorboston.com/hackathons)** — monthly virtual + in-person events with team formation, submission gallery, and AI-judged scoring (Hack-a-Sprint, Sports Hack, PyData notebooks).
+- **[Generals](https://cursorboston.com/game)** — a persistent turn-based strategy MMO contributors can play and contribute to. Includes Heroes, Armageddon end-game, public profiles, pacts, prophecies, and a public-vote chronicle system. Game contribution docs live under [`docs/generals/`](docs/generals/README.md).
+- **[Mentorship](https://cursorboston.com/mentorship)** & **[Pair Programming](https://cursorboston.com/pair)** — matchmaking between members.
+- **[Talks](https://cursorboston.com/talks)** & **[Showcase](https://cursorboston.com/showcase)** — community presentations + project gallery.
+- **[Questions](https://cursorboston.com/questions)** — community Q&A on Cursor workflows, prompting patterns, and engineering process.
 
 ### 🎯 Who is this for?
 - **🌱 Beginners & Students**: Pick up AI-assisted development from day one — no experience required.
@@ -74,7 +89,7 @@ graph TB
 
     subgraph Vercel["Vercel"]
         Pages["Pages & Layouts<br/>(SSR / Static)"]
-        API["API Routes<br/>(63 endpoints)"]
+        API["API Routes<br/>(214+ endpoints)"]
         MW["Middleware<br/>(CSRF, Rate Limit, Logging)"]
     end
 
@@ -122,17 +137,45 @@ Want to add a major feature to the platform? We have **6 open feature projects**
 
 Each feature is **fully isolated** — new routes, new Firestore collections, no entanglement with existing code. Pick one, comment to claim it, and ship it. See the [Contributing Guide](.github/CONTRIBUTING.md#claiming-an-issue) for how to get started.
 
+> **Looking for something smaller?** Browse [`good first issue`](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) for beginner-friendly tasks. Issues tagged **`maintainer:audit`** are internal maintainer review work — not for new contributors; you can safely ignore that label.
+
+> **Where does my PR go?** Most contributions target **`develop`** (the default base). A few — PyData notebooks, summer cohort weekly submissions, game content, maintainer applications — target dedicated long-lived branches instead. See [docs/SUBMISSION_BRANCHES.md](docs/SUBMISSION_BRANCHES.md) for the routing table.
+
+---
+
+## 🔌 API Reference
+
+- **Full endpoint list**: [docs/API.md](docs/API.md) — 215 operations across 32 areas
+- **Live Swagger UI**: [`/api/docs`](https://cursorboston.com/api/docs) (or `http://localhost:3000/api/docs` in dev)
+- **OpenAPI 3.0 spec**: served at `/openapi.json`, regenerated by `npm run generate:openapi` on every build
+- **Per-area contracts** live in `lib/api-schemas/` and use [`@ts-rest/core`](https://ts-rest.com) + [`zod`](https://zod.dev). Each route validates its inputs against the same schema the spec is generated from, so docs and code can't drift.
+- **Adding a new route**: define the contract in `lib/api-schemas/<area>.ts`, register it in `lib/api-schemas/index.ts`, then validate inputs via `contract.<route>.body.safeParse(...)` in your route handler. The CI gate (`npm run check:route-contracts`) blocks any new route under `app/api/` that doesn't import a contract.
+
 ---
 
 ## 📚 Community
+
+### Which onboarding doc do I read?
+
+| If you… | Read this | Time |
+|---|---|---|
+| Have never coded before | [GET_STARTED.md](docs/GET_STARTED.md) — uses AI tools, plain language | ~30 min |
+| Know git, want the shortest path to a merged PR | [CONTRIBUTING.md § Your first PR in 5 minutes](.github/CONTRIBUTING.md#your-first-pr-in-5-minutes) | ~5 min |
+| Want a guided first-PR walkthrough with explanations | [FIRST_CONTRIBUTION.md](docs/FIRST_CONTRIBUTION.md) | ~30–45 min |
+| Want the full contribution policy (issue claiming, code style, review process) | [CONTRIBUTING.md](.github/CONTRIBUTING.md) | reference |
+
+### Full documentation index
+
 - [Documentation index](docs/README.md) - Order of docs for newcomers vs maintainers
+- [User Guide](docs/USER_GUIDE.md) - Map of every section on cursorboston.com (visitor sitemap)
 - [Get Started (No Experience Needed)](docs/GET_STARTED.md) - Plain-language guide for complete beginners
 - [Development Guide](docs/DEVELOPMENT.md) - Setup, scripts, troubleshooting, architecture
 - [First Contribution](docs/FIRST_CONTRIBUTION.md) - Step-by-step first PR walkthrough
 - [Contributing Guide](.github/CONTRIBUTING.md) - Contribution policy and code style
+- [Submission branches](docs/SUBMISSION_BRANCHES.md) - When to PR against `develop` vs. a long-lived submission branch
 - [Support](.github/SUPPORT.md) - Where to ask questions (Discord, issues, email)
 - [Governance](.github/GOVERNANCE.md) - Roles, decisions, and maintainer process
-- [Maintainers](MAINTAINERS.md) - Pointer to governance and releases
+- [Maintainers](MAINTAINERS.md) - Current roster and per-area ownership
 - [GitHub Issues](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues) - Browse and claim open tasks
 - [Code of Conduct](.github/CODE_OF_CONDUCT.md) - Our community standards
 - [Security Policy](.github/SECURITY.md) - How to report security vulnerabilities
@@ -142,6 +185,7 @@ Each feature is **fully isolated** — new routes, new Firestore collections, no
 - [Changelog](CHANGELOG.md) - Version history
 - [Vercel deployments](docs/VERCEL.md) - Production-only deploys (PRs do not trigger Vercel builds)
 - [API Reference](docs/API.md) - Full list of API endpoints
+- [LICENSE](LICENSE) and [NOTICE](NOTICE) - GPL-3.0 license terms and project attributions
 
 ---
 
@@ -180,10 +224,13 @@ docker build -f docker/Dockerfile \
   --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your-id \
   --build-arg NEXT_PUBLIC_FIREBASE_APP_ID=your-app-id \
   --build-arg NEXT_PUBLIC_FIREBASE_DATABASE_URL=your-db-url \
+  --build-arg UNSUBSCRIBE_SECRET=build-only-placeholder-secret-32-bytes \
   -t cursor-boston .
 
-# Run the container
-docker run -p 3000:3000 cursor-boston
+# Run the container with the real runtime signing secret
+docker run -p 3000:3000 \
+  -e UNSUBSCRIBE_SECRET="$(openssl rand -hex 32)" \
+  cursor-boston
 ```
 
 The image uses Node 22 Alpine, runs as a non-root user, and includes a health check at `/api/health`.
@@ -223,6 +270,10 @@ CRON_SECRET=your-secret RATE_LIMIT_CLEANUP_BATCH_SIZE=200 RATE_LIMIT_CLEANUP_MAX
 - [ ] **v0.2**: Enhanced Member Profiles & Social Integration
 - [ ] **v0.3**: Community Discussion Boards
 - [ ] **v0.4**: PWA & Mobile Optimization
+
+See the full roadmap — including active development, planned work, and where to find issues to pick up — in **[`.github/ACTIVE_ISSUES.md`](.github/ACTIVE_ISSUES.md)**.
+
+Maintained by **[@rogerSuperBuilderAlpha](https://github.com/rogerSuperBuilderAlpha)** (Project Lead), **[@bradAGI](https://github.com/bradAGI)** (Maintainer), **[@nebullii](https://github.com/nebullii)** (Maintainer), and **[@AaronGrace978](https://github.com/AaronGrace978)** (Community Maintainer) — see [MAINTAINERS.md](MAINTAINERS.md) for area ownership.
 
 ---
 

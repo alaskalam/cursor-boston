@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -8,6 +9,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 import eventsData from "@/content/events.json";
 import { EventsBrowse } from "@/components/events/EventsBrowse";
+import { PydataLockedBanner } from "@/components/events/PydataLockedBanner";
 import { todayYmdInListingTz } from "@/lib/events-calendar-buckets";
 import { EventsData } from "@/types/events";
 
@@ -151,9 +153,15 @@ const eventTypes = [
   },
 ];
 
-export default function EventsPage() {
+export default async function EventsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ pydataLocked?: string }>;
+}) {
   const listingTodayYmd = todayYmdInListingTz(new Date());
   const eventsJsonLd = generateEventsJsonLd();
+  const { pydataLocked } = await searchParams;
+  const showPydataLocked = pydataLocked === "1";
 
   return (
     <main className="flex flex-col">
@@ -166,6 +174,7 @@ export default function EventsPage() {
           }}
         />
       ))}
+      {showPydataLocked && <PydataLockedBanner />}
       {/* Hero */}
       <section className="py-16 md:py-24 px-6 border-b border-neutral-200 dark:border-neutral-800">
         <div className="max-w-4xl mx-auto text-center">

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -15,6 +16,7 @@ import {
 } from "@/lib/hackathons";
 import { getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,13 +51,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Server not configured" }, { status: 500 });
     }
 
-    let body: Record<string, unknown>;
+    let body: unknown;
     try {
-      body = (await request.json()) as Record<string, unknown>;
+      body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-    const hackathonId = (body.hackathonId as string) || getCurrentVirtualHackathonId();
+    const parsed = hackathonsContract.submissionSubmit.body.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
+    const hackathonId = parsed.data.hackathonId || getCurrentVirtualHackathonId();
 
     if (!isVirtualHackathonId(hackathonId)) {
       return NextResponse.json(

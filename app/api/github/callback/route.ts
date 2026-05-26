@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,6 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withMiddleware, rateLimitConfigs } from "@/lib/middleware";
 import { logger } from "@/lib/logger";
+import { githubContract } from "@/lib/api-schemas/github";
 
 const GITHUB_CLIENT_ID = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
@@ -43,14 +45,26 @@ function buildCallbackRedirect(
 
 async function handleGitHubCallback(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const code = searchParams.get("code");
-  const state = searchParams.get("state");
+  const parsedQuery = githubContract.callback.query.safeParse({
+    code: searchParams.get("code") ?? undefined,
+    state: searchParams.get("state") ?? undefined,
+  });
+  const code = parsedQuery.success ? parsedQuery.data.code ?? null : null;
+  const state = parsedQuery.success ? parsedQuery.data.state ?? null : null;
   const expectedState = request.cookies.get("github_oauth_state")?.value;
   const returnTo = sanitizeReturnTo(
     request.cookies.get("github_oauth_return_to")?.value
   );
 
   if (!code || !state) {
+    // Silent path before — log so we can tell when users land here without
+    // the expected OAuth params (interrupted flow, back-nav onto the callback
+    // URL, GitHub didn't return a code, etc.).
+    logger.warn("GitHub OAuth missing params", {
+      endpoint: "/api/github/callback",
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+    });
     return buildCallbackRedirect(request, returnTo, "github=error&message=missing_params");
   }
 
@@ -136,8 +150,42 @@ async function handleGitHubCallback(request: NextRequest) {
   }
 }
 
-// Apply rate limiting and logging middleware
+// Apply rate limiting and logging middleware. Rate-limit denials
+// redirect to the originating page with `?github=error&message=rate_limited`
+// instead of returning JSON 429 — see lib/oauth-errors.ts for the
+// matching client-side copy.
+//
+// `failMode: "degrade"` (was "closed" through 2026-05-24): if Upstash is
+// unreachable we fall back to the per-instance in-memory rate limiter
+// instead of denying every callback. Production tripped fail-closed all
+// afternoon when Upstash flapped — every OAuth user got
+// `?github=error&message=rate_limited` even though no real rate limit had
+// been hit. Brute-force protection on the callback is the cookie-bound
+// `state` token; the rate limit is purely defense-in-depth.
 export const GET = withMiddleware(
   rateLimitConfigs.oauthCallback,
-  handleGitHubCallback
+  handleGitHubCallback,
+  {
+    distributed: true,
+    failMode: "degrade",
+    onRateLimitDenied: (request, result) => {
+      const returnTo = sanitizeReturnTo(
+        request.cookies.get("github_oauth_return_to")?.value
+      );
+      // Silent path before — log so we can distinguish "ceiling hit" from
+      // "Upstash unavailable" without scraping 503/307 ratios from the edge.
+      logger.warn("GitHub OAuth rate-limit denied", {
+        endpoint: "/api/github/callback",
+        reason:
+          "reason" in result && result.reason
+            ? result.reason
+            : "rate_limited",
+      });
+      return buildCallbackRedirect(
+        request,
+        returnTo,
+        "github=error&message=rate_limited"
+      );
+    },
+  }
 );

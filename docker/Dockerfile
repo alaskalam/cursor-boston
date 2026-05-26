@@ -6,18 +6,22 @@
 # ==========================================
 
 # Stage 1: Dependencies
-FROM node:22-alpine AS deps
+FROM node:22.20.0-alpine3.21@sha256:f40aebdd0c1959821ab6d72daecafb2cd1d4c9a958e9952c1d71b84d4458f875 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install dependencies. `--ignore-scripts` skips:
+#   - prepare → `husky install` (no .git in the image)
+#   - postinstall → `node scripts/maybe-install-playwright.js` (script file isn't
+#     copied into this stage and Playwright is for e2e/dev only, not production)
+# Both are dev-environment niceties, not runtime requirements.
+RUN npm ci --only=production --ignore-scripts && npm cache clean --force
 
 # Stage 2: Builder
-FROM node:22-alpine AS builder
+FROM node:22.20.0-alpine3.21@sha256:f40aebdd0c1959821ab6d72daecafb2cd1d4c9a958e9952c1d71b84d4458f875 AS builder
 WORKDIR /app
 
 # Copy dependencies from deps stage
@@ -32,6 +36,7 @@ ARG NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
 ARG NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
 ARG NEXT_PUBLIC_FIREBASE_APP_ID
 ARG NEXT_PUBLIC_FIREBASE_DATABASE_URL
+ARG UNSUBSCRIBE_SECRET
 
 # Set environment variables for build
 ENV NEXT_PUBLIC_FIREBASE_API_KEY=$NEXT_PUBLIC_FIREBASE_API_KEY
@@ -41,6 +46,7 @@ ENV NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=$NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
 ENV NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=$NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
 ENV NEXT_PUBLIC_FIREBASE_APP_ID=$NEXT_PUBLIC_FIREBASE_APP_ID
 ENV NEXT_PUBLIC_FIREBASE_DATABASE_URL=$NEXT_PUBLIC_FIREBASE_DATABASE_URL
+ENV UNSUBSCRIBE_SECRET=$UNSUBSCRIBE_SECRET
 
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -52,12 +58,15 @@ ENV DOCKER_BUILD=1
 RUN npm run build
 
 # Stage 3: Runner (Production)
-FROM node:22-alpine AS runner
+FROM node:22.20.0-alpine3.21@sha256:f40aebdd0c1959821ab6d72daecafb2cd1d4c9a958e9952c1d71b84d4458f875 AS runner
 WORKDIR /app
 
 # Set production environment
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Runtime must provide a real value; this empty default keeps the final image
+# from baking the build-time placeholder into the production server.
+ENV UNSUBSCRIBE_SECRET=""
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \

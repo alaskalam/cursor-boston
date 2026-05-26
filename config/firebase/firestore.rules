@@ -44,12 +44,17 @@ service cloud.firestore {
                   || (request.auth != null && request.auth.uid == userId);
       allow create: if request.auth != null
                     && request.auth.uid == userId
-                    && !request.resource.data.keys().hasAny(['earnedBadgeIds', 'pullRequestsCount', 'hackASprint2026ShowcaseBadge', 'hackASprint2026ShowcaseAwards', 'hackASprint2026Unlocked', 'hackASprint2026UnlockedAt', 'hackASprint2026CreditEmailSentAt']);
+                    && !request.resource.data.keys().hasAny(['cursor', 'earnedBadgeIds', 'pullRequestsCount', 'hackASprint2026ShowcaseBadge', 'hackASprint2026ShowcaseAwards', 'hackASprint2026Unlocked', 'hackASprint2026UnlockedAt', 'hackASprint2026CreditEmailSentAt']);
       allow update: if request.auth != null 
                     && request.auth.uid == userId
                     && !request.resource.data.diff(resource.data).affectedKeys()
-                        .hasAny(['uid', 'createdAt', 'role', 'email', 'earnedBadgeIds', 'pullRequestsCount', 'hackASprint2026ShowcaseBadge', 'hackASprint2026ShowcaseAwards', 'hackASprint2026Unlocked', 'hackASprint2026UnlockedAt', 'hackASprint2026CreditEmailSentAt']);
+                        .hasAny(['uid', 'createdAt', 'role', 'email', 'cursor', 'earnedBadgeIds', 'pullRequestsCount', 'hackASprint2026ShowcaseBadge', 'hackASprint2026ShowcaseAwards', 'hackASprint2026Unlocked', 'hackASprint2026UnlockedAt', 'hackASprint2026CreditEmailSentAt']);
       allow delete: if false; // Users cannot delete their own accounts via client
+
+      // Cursor API keys are encrypted and stored server-side only.
+      match /secrets/{docId} {
+        allow read, write: if false;
+      }
     }
     
     // Email lookup collection - maps emails to user UIDs for multi-email login
@@ -227,6 +232,13 @@ service cloud.firestore {
       allow write: if false; // Only server-side writes via Admin SDK
     }
 
+    // Cursor Cloud Agent idea runs - users can read their own run history,
+    // while creation, refresh, cancellation, archive, and deletion stay server-side.
+    match /cursorAgentRuns/{runId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+      allow write: if false;
+    }
+
     // Coworking sessions - read-only for clients, server manages slots
     match /coworkingSessions/{sessionId} {
       allow read: if true; // Anyone can view sessions
@@ -237,6 +249,43 @@ service cloud.firestore {
     match /coworkingRegistrations/{registrationId} {
       allow read: if request.auth != null;
       allow write: if false; // Only server-side writes for data integrity
+    }
+
+    // Mentorship - Profiles: users can create/update their own profile, authenticated users can read active profiles
+    match /mentorship_profiles/{userId} {
+      allow read: if request.auth != null && (resource.data.isActive == true || request.auth.uid == userId);
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    // Mentorship - Requests: create by fromUserId, read by participants, update by toUserId only
+    match /mentorship_requests/{requestId} {
+      allow create: if request.auth != null && request.resource.data.fromUserId == request.auth.uid;
+      allow read: if request.auth != null && (
+        resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid
+      );
+      allow update: if request.auth != null && resource.data.toUserId == request.auth.uid;
+      allow delete: if request.auth != null && (
+        resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid
+      );
+    }
+
+    // Mentorship - Pairings: read by mentor or mentee, created server-side when request is accepted
+    match /mentorship_pairings/{pairingId} {
+      allow read: if request.auth != null && (
+        resource.data.mentorId == request.auth.uid || resource.data.menteeId == request.auth.uid
+      );
+      allow create: if false; // Created server-side via Admin SDK when request is accepted
+      allow update: if false; // Goal/status updates are server-side only
+      allow delete: if false;
+    }
+
+    // Mentorship - Check-ins: participants can read, create by author, no updates
+    match /mentorship_check_ins/{checkInId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.authorId;
+      allow create: if false; // Created server-side via Admin SDK
+      allow update, delete: if false;
     }
 
     // Pair Programming - Profiles: users can create/update their own profile, read active profiles
@@ -356,6 +405,197 @@ service cloud.firestore {
     match /answer_votes/{voteId} {
       allow read: if request.auth != null;
       allow create, update, delete: if false;
+    }
+
+    // Game — Players: authenticated users can read all player docs (leaderboard,
+    // scouting). All writes go through the Admin SDK via /api/game/* routes.
+    match /game_players/{userId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Tiles: authenticated users can read all tiles (the world is
+    // shared and visible). All writes go through the Admin SDK.
+    match /game_tiles/{tileId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Attacks: authenticated users can read attack records. All writes
+    // go through the Admin SDK via the attack endpoint (PR 3+).
+    match /game_attacks/{attackId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — World metadata (singleton player-count cursor, etc.): Admin SDK only.
+    match /game_world_meta/{docId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — World snapshot (denormalized tiles + owner summaries). The
+    // map view subscribes to `latest` via a Firestore real-time listener,
+    // which auto-detaches when the tab is hidden or the user goes idle
+    // for ~5 min. Authenticated read only. All writes are Admin SDK
+    // (cron + post-action freshness rebuild).
+    match /game_world_snapshots/{docId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Community feed (append-only event log of player joins,
+    // caste picks, attacks, milestones). Surfaced in the dashboard's
+    // CommunityPanel. Authenticated read; all writes flow through the
+    // Admin SDK in lib/game/community.ts (logCommunityEventInTx /
+    // logCommunityEvent), so direct client writes are denied.
+    match /game_community_events/{eventId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Armageddon hall of fame. One doc per resolved Armageddon
+    // (doc id = seasonNumber). Persists the lottery winners + seal audit
+    // trail + top-by-tiles snapshot so glory survives the world wipe.
+    // Authenticated read; writes are Admin-SDK only via the resolver
+    // (lib/game/armageddon-resolve.ts).
+    match /game_armageddon_events/{eventId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Heroes v2 registry. Persistent records for every hero that
+    // has ever existed; survives Armageddon. World-readable so the All
+    // Heroes / Hall of the Fallen views work. Per-hero visibility filtering
+    // (hide currentTileId/stamina unless viewer is adjacent or owner) is
+    // enforced at the API layer, not in rules. All writes go through the
+    // Admin SDK via lib/game/hero-registry.ts.
+    match /game_heroes/{heroId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+
+      // Per-hero append-only event log. Same rule shape — authenticated
+      // read, server-only writes. Event filtering (only show events from
+      // your tenure unless hero is deceased) is enforced at the API layer.
+      match /events/{eventId} {
+        allow read: if request.auth != null;
+        allow create, update, delete: if false;
+      }
+
+      // In-game chronicle chapters contributed via the hero detail page.
+      // Authenticated read; all writes flow through /api/game/heroes/
+      // [heroId]/chapter (rate-limited, owner-auto-approves, others
+      // submit pending). Soft-delete by author or admin.
+      match /chapters/{chapterId} {
+        allow read: if request.auth != null;
+        allow create, update, delete: if false;
+      }
+
+      // Eulogies posted on deceased / awaiting-resurrection heroes.
+      // Authenticated read; writes flow through /api/game/heroes/
+      // [heroId]/epitaph. Soft-delete by author or admin.
+      match /epitaphs/{epitaphId} {
+        allow read: if request.auth != null;
+        allow create, update, delete: if false;
+      }
+    }
+
+    // Game — Community chat (free-form message board). Reads are
+    // authenticated. All writes (create + soft-delete) flow through
+    // /api/game/community/chat which validates ownership and admin
+    // status before delegating to the Admin SDK. Direct client writes
+    // would bypass the rate-limit + length checks, so deny.
+    match /game_community_messages/{messageId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Per-user reaction trackers. Doc id encodes
+    // {userId}_{scope}_{docId}_{emojiIndex}; existence means "user has
+    // placed this reaction." Reads are authenticated; writes flow only
+    // through /api/game/reactions which keeps counters on the target
+    // docs in sync via FieldValue.increment.
+    match /game_reactions/{trackerId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Phase 7: public non-aggression pacts. Authenticated read; writes
+    // through /api/game/pacts (rate-limited, server-side denorm of
+    // author/target display name + caste). Attack handler marks
+    // pact.brokenAt when the author attacks the target inside the
+    // window.
+    match /game_pacts/{pactId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Phase 7: pre-filed Armageddon prophecies. Authenticated read;
+    // writes through /api/game/prophecies. Resolution (resolvedAt +
+    // fulfilledBy) is stamped by the Armageddon-cast handler when the
+    // targeted seal breaks.
+    match /game_prophecies/{prophecyId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if false;
+    }
+
+    // Zero-turn gameplay: queued battle plans that execute at the next
+    // weekly turn grant. A player can only read their own queue.
+    // Writes go through /api/game/orders (validation + per-player cap)
+    // and through the rollover executor when orders fire.
+    match /game_order_queue/{orderId} {
+      allow read: if request.auth != null
+        && resource.data.playerId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Artifacts (v2): a player can only read their own inventory.
+    // All writes go through the Admin SDK via turn-spending API routes.
+    match /game_artifacts/{artifactId} {
+      allow read: if request.auth != null
+        && resource.data.ownerId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // Game — Intel effects (v2): time-bounded combat modifiers produced by
+    // intel spells (alert-vs-caster from Black/Green spies; forge-sight-
+    // offense from Red Forge Sight). A player can only read effects they
+    // own (i.e. effects targeting them as defender, or their own attacker-
+    // side buffs). All writes go through the Admin SDK via /api/game/spy
+    // and /api/game/attack.
+    match /game_intel_effects/{effectId} {
+      allow read: if request.auth != null
+        && resource.data.ownerId == request.auth.uid;
+      allow create, update, delete: if false;
+    }
+
+    // Trust & safety: in-product abuse-report records on community
+    // user-generated content. Reporters can only create their own
+    // reports; only admins can list/triage. Server-side mutations via
+    // /api/community/moderate use Admin SDK and bypass these rules.
+    match /communityReports/{reportId} {
+      allow create: if request.auth != null
+                    && request.resource.data.reporterUid == request.auth.uid
+                    && request.resource.data.targetMessageId is string
+                    && request.resource.data.reason is string;
+      allow read, update, delete: if false; // Admin SDK only
+    }
+
+    // Trust & safety: per-user block list. Each blocker owns a
+    // subdocument tree of users they've blocked; clients can only
+    // read/write their own list. Feed filtering is enforced server-side.
+    match /userBlocks/{ownerUid}/blocked/{targetUid} {
+      allow read, write: if request.auth != null && request.auth.uid == ownerUid;
+    }
+    match /userBlocks/{ownerUid} {
+      allow read, write: if request.auth != null && request.auth.uid == ownerUid;
+    }
+
+    // Account-deletion progress docs. Server-only — clients should
+    // never see them. Listed so the registry-guard test classifies them
+    // explicitly.
+    match /accountDeletions/{uid} {
+      allow read, write: if false;
     }
   }
 }

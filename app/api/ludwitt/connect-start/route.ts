@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -18,6 +19,8 @@ import {
   getLudwittClientId,
   getLudwittRedirectUri,
 } from "@/lib/ludwitt-config";
+
+// @contracts: ludwittContract.connectStart (lib/api-schemas/ludwitt.ts)
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -90,4 +93,8 @@ async function handleConnectStart(request: NextRequest): Promise<NextResponse> {
   return response;
 }
 
-export const POST = withMiddleware(rateLimitConfigs.standard, handleConnectStart);
+export const POST = withMiddleware(
+  rateLimitConfigs.standard,
+  handleConnectStart,
+  { distributed: true, failMode: "closed" }
+);

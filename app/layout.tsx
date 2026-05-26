@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,12 +8,12 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import AppShell from "@/components/AppShell";
-import WelcomeModal from "@/components/WelcomeModal";
 import SummerCohortModal from "@/components/SummerCohortModal";
 import LumaCheckoutTracker from "@/components/LumaCheckoutTracker";
 import { KonamiListener } from "@/components/hunt/KonamiListener";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { ToastProvider } from "@/components/Toast";
 
 const ORGANIZATION_SOCIAL_LINKS = [
   "https://discord.gg/Wsncg8YYqc",
@@ -123,11 +124,12 @@ export default function RootLayout({
         </a>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <AuthProvider>
-            <AppShell>{children}</AppShell>
-            <WelcomeModal />
-            <SummerCohortModal />
-            <LumaCheckoutTracker />
-            <KonamiListener />
+            <ToastProvider>
+              <AppShell>{children}</AppShell>
+              <SummerCohortModal />
+              <LumaCheckoutTracker />
+              <KonamiListener />
+            </ToastProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

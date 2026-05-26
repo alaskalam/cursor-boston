@@ -4,8 +4,9 @@
 
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/hackathons/events/[eventId]/checkin/route";
-import { getVerifiedUser } from "@/lib/server-auth";
+import { getVerifiedUser, isCurrentIdTokenRevoked } from "@/lib/server-auth";
 import { getAdminDb } from "@/lib/firebase-admin";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 jest.mock("@/lib/rate-limit", () => {
   const actual = jest.requireActual("@/lib/rate-limit");
@@ -18,6 +19,7 @@ jest.mock("@/lib/rate-limit", () => {
 
 jest.mock("@/lib/server-auth", () => ({
   getVerifiedUser: jest.fn(),
+  isCurrentIdTokenRevoked: jest.fn(async () => false),
 }));
 
 jest.mock("@/lib/firebase-admin", () => ({
@@ -30,6 +32,9 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 const mockGetVerifiedUser = getVerifiedUser as jest.MockedFunction<typeof getVerifiedUser>;
+const mockIsRevoked = isCurrentIdTokenRevoked as jest.MockedFunction<
+  typeof isCurrentIdTokenRevoked
+>;
 const mockGetAdminDb = getAdminDb as jest.MockedFunction<typeof getAdminDb>;
 
 const VALID_EVENT_ID = "hack-a-sprint-2026";
@@ -56,13 +61,16 @@ function makeMockDoc(data: Record<string, unknown> | null) {
 }
 
 describe("POST /api/hackathons/events/[eventId]/checkin", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockIsRevoked.mockResolvedValue(false);
+  });
 
-  it("returns 403 when not authenticated", async () => {
+  it("returns 401 when not authenticated", async () => {
     mockGetVerifiedUser.mockResolvedValue(null);
     const req = makeRequest({ userId: "u1", checkedIn: true });
     const res = await POST(req, makeContext(VALID_EVENT_ID));
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
   });
 
   it("returns 403 when user is not admin", async () => {
@@ -226,5 +234,42 @@ describe("POST /api/hackathons/events/[eventId]/checkin", () => {
     expect(res.status).toBe(404);
     const json = await res.json();
     expect(json.error).toContain("cursorboston.com account");
+  });
+
+  it("returns 429 when rate-limited with defaulted Retry-After=60", async () => {
+    (checkRateLimit as jest.Mock).mockReturnValueOnce({ success: false });
+    mockGetVerifiedUser.mockResolvedValue({ uid: "admin", isAdmin: true });
+    const req = makeRequest({ userId: "u1", checkedIn: true });
+    const res = await POST(req, makeContext(VALID_EVENT_ID));
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("60");
+  });
+
+  it("returns 400 when userId is whitespace-only", async () => {
+    mockGetVerifiedUser.mockResolvedValue({ uid: "admin", isAdmin: true });
+    const req = makeRequest({ userId: "   ", checkedIn: true });
+    const res = await POST(req, makeContext(VALID_EVENT_ID));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain("userId required");
+  });
+
+  it("returns 500 'Failed to update check-in' when firestore update throws", async () => {
+    const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockGetVerifiedUser.mockResolvedValue({ uid: "admin", isAdmin: true });
+    mockGetAdminDb.mockReturnValue({
+      collection: jest.fn(() => ({
+        doc: jest.fn(() => ({
+          get: jest.fn(async () => makeMockDoc({ /* signup exists */ })),
+          update: jest.fn().mockRejectedValue(new Error("write conflict")),
+        })),
+      })),
+    } as never);
+    const req = makeRequest({ userId: "u1", checkedIn: true });
+    const res = await POST(req, makeContext(VALID_EVENT_ID));
+    expect(res.status).toBe(500);
+    const json = await res.json();
+    expect(json.error).toBe("Failed to update check-in");
+    consoleErrorSpy.mockRestore();
   });
 });

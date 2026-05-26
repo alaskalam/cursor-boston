@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -9,12 +10,12 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
-import { LumaEmbed } from "@/components/hackathons/LumaEmbed";
+import { SportsHack2026EventNav } from "@/components/hackathons/SportsHack2026EventNav";
 import {
+  SPORTS_HACK_2026_ATTENDANCE_LIMIT,
   SPORTS_HACK_2026_CAPACITY,
   SPORTS_HACK_2026_EVENT_ID,
   SPORTS_HACK_2026_LOCATION,
-  SPORTS_HACK_2026_LUMA_EMBED_ID,
   SPORTS_HACK_2026_LUMA_URL,
   SPORTS_HACK_2026_NAME,
 } from "@/lib/sports-hack-2026";
@@ -23,6 +24,11 @@ type LeaderboardEntry = {
   rank: number;
   status?: "confirmed" | "waitlisted";
   creditEligible: boolean;
+  /** Three-tier ranking model fields (sports-hack-2026). Optional for back-compat. */
+  tier?: "A" | "B" | "C" | null;
+  inAttendanceBand?: boolean;
+  inCreditBand?: boolean;
+  hasSubmission?: boolean;
 };
 
 type LeaderboardResponse = {
@@ -30,7 +36,13 @@ type LeaderboardResponse = {
   websiteSignupCount?: number;
   entries: LeaderboardEntry[];
   creditTopN: number;
-  me?: { signedUp: boolean; rank: number | null } | null;
+  confirmedAttendeeCount?: number;
+  attendanceLimit?: number;
+  me?: {
+    signedUp: boolean;
+    rank: number | null;
+    attendingConfirmed?: boolean;
+  } | null;
 };
 
 export default function SportsHack2026LandingPage() {
@@ -58,15 +70,20 @@ export default function SportsHack2026LandingPage() {
     void load();
   }, [load]);
 
-  const confirmedCount = data
-    ? data.entries.filter((e) => (e.status ?? (e.creditEligible ? "confirmed" : "waitlisted")) === "confirmed").length
+  // "Credit seats locked" — under the three-tier model this is the count of
+  // entries inside the top-119 credit band that ALSO have an open submission PR.
+  // creditEligible already encodes `inCreditBand && hasSubmission` on the
+  // server side, so use it directly. Pre-event this is zero (nobody has
+  // opened a submission PR yet) and ramps as PRs land on event day.
+  const creditLockedCount = data
+    ? data.entries.filter((e) => e.creditEligible).length
     : null;
   const isAdmin = Boolean((userProfile as { isAdmin?: boolean } | null)?.isAdmin);
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <div className="mx-auto max-w-5xl px-6 py-12 md:py-16">
-        <nav className="mb-8 text-sm text-neutral-500 dark:text-neutral-400">
+        <nav className="mb-4 text-sm text-neutral-500 dark:text-neutral-400">
           <Link
             href="/hackathons"
             className="hover:text-emerald-600 dark:hover:text-emerald-400"
@@ -78,6 +95,8 @@ export default function SportsHack2026LandingPage() {
             {SPORTS_HACK_2026_NAME}
           </span>
         </nav>
+
+        <SportsHack2026EventNav />
 
         <div className="grid gap-10 md:grid-cols-[1fr_minmax(320px,420px)]">
           <div>
@@ -98,11 +117,19 @@ export default function SportsHack2026LandingPage() {
               <FactCard label="When" value="Tue May 26 · 10 AM – 4 PM ET" />
               <FactCard label="Where" value={SPORTS_HACK_2026_LOCATION} />
               <FactCard
-                label="Capacity"
+                label="Confirmed attending"
                 value={
-                  confirmedCount != null && data
-                    ? `${confirmedCount}/${SPORTS_HACK_2026_CAPACITY} confirmed · ${data.totalCount} registered`
-                    : `${SPORTS_HACK_2026_CAPACITY} confirmed seats`
+                  data
+                    ? `${data.confirmedAttendeeCount ?? 0}/${data.attendanceLimit ?? SPORTS_HACK_2026_ATTENDANCE_LIMIT} · ${data.totalCount} signed up`
+                    : `${SPORTS_HACK_2026_ATTENDANCE_LIMIT} guaranteed-entry cap`
+                }
+              />
+              <FactCard
+                label="Credit seats locked"
+                value={
+                  creditLockedCount != null && data
+                    ? `${creditLockedCount}/${SPORTS_HACK_2026_CAPACITY} (in band + submission opened)`
+                    : `Top ${SPORTS_HACK_2026_CAPACITY} get Cursor credit`
                 }
               />
               <FactCard
@@ -120,14 +147,6 @@ export default function SportsHack2026LandingPage() {
                   ? `You're signed up${data.me.rank != null ? ` — rank #${data.me.rank}` : ""} · Manage`
                   : "Register on the website"}
               </Link>
-              <a
-                href={SPORTS_HACK_2026_LUMA_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center rounded-lg border border-neutral-300 px-6 py-3 text-sm font-semibold hover:bg-neutral-100 dark:border-neutral-600 dark:hover:bg-neutral-800"
-              >
-                RSVP on Luma →
-              </a>
               {isAdmin ? (
                 <Link
                   href={`/hackathons/${SPORTS_HACK_2026_EVENT_ID}/admin`}
@@ -137,15 +156,23 @@ export default function SportsHack2026LandingPage() {
                 </Link>
               ) : null}
             </div>
-            <p className="mt-3 text-sm text-amber-600 dark:text-amber-400 font-medium">
-              You must register on <strong>both</strong>: Luma (for door entry) <strong>and</strong> the website (for hackathon ranking &amp; prizes). One without the other won&apos;t get you in.
+            <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-400 font-medium">
+              The website is the source of truth — sign up, claim a spot, and confirm
+              attendance here to be on the door list and in the credit-band ranking.
+              {" "}
+              <span className="text-neutral-600 dark:text-neutral-400 font-normal">
+                A Luma or Partiful RSVP shows up next to your name as an interest
+                signal, but only the website list decides who gets in.
+              </span>
             </p>
 
             <div className="mt-10 rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900">
-              <h2 className="text-lg font-semibold">How selection works</h2>
+              <h2 className="text-lg font-semibold">How to win a Cursor credit</h2>
               <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-                Luma approves your registration. Cursor Boston then ranks registrants by
-                merged PRs to the{" "}
+                We have <strong>{SPORTS_HACK_2026_CAPACITY} Cursor credit codes</strong>{" "}
+                for participants. The ranking is computed off the website signup list:
+                claim a spot, confirm attendance, and the top{" "}
+                {SPORTS_HACK_2026_CAPACITY} by merged PRs to the{" "}
                 <a
                   href="https://github.com/rogerSuperBuilderAlpha/cursor-boston"
                   target="_blank"
@@ -154,30 +181,82 @@ export default function SportsHack2026LandingPage() {
                 >
                   cursor-boston
                 </a>{" "}
-                community repo, with signup time as the tiebreaker. Top{" "}
-                {SPORTS_HACK_2026_CAPACITY} get a confirmed seat; the rest join the
-                waitlist. Merge a PR to move up.
+                community repo (signup time as the tiebreaker) land in the credit
+                band. Merge a PR to move up; open a submission PR on event day to
+                unlock the code itself.
+              </p>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900">
+              <h2 className="text-lg font-semibold">How to submit your project</h2>
+              <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+                On event day, open a PR into the{" "}
+                <code className="rounded bg-neutral-200 px-1 py-0.5 text-xs font-mono dark:bg-neutral-800">
+                  sports-hack-2026-submissions
+                </code>{" "}
+                branch with a folder named after your GitHub handle containing one{" "}
+                <code className="font-mono">meta.json</code> describing the project:
+                title, description, video URL (Loom / YouTube / any explainer), GitHub
+                repo URL, and a deployed URL.
+              </p>
+              <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+                <strong className="text-rose-600 dark:text-rose-400">
+                  Hard deadline: 4:00 PM ET on Tuesday, May 26 (event end).
+                </strong>{" "}
+                Your PR must be opened before this moment to be eligible for AI scoring.
+                One second late and your AI eval is gone — but human judges still review
+                every merged submission, so the judges track stays open.
+              </p>
+              <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
+                Winners: <strong>3 on the AI track</strong> + <strong>3 on the judges
+                track</strong> = 6 total.{" "}
+                <Link
+                  href="/events/cursor-boston-sports-hack-2026"
+                  className="text-emerald-600 underline dark:text-emerald-400"
+                >
+                  Full submission rules + public board →
+                </Link>
               </p>
             </div>
           </div>
 
           <aside className="md:sticky md:top-24 md:self-start">
-            <LumaEmbed
-              embedId={SPORTS_HACK_2026_LUMA_EMBED_ID}
-              title={`${SPORTS_HACK_2026_NAME} — Luma registration`}
-              aspect="square"
-            />
-            <p className="mt-3 text-center text-xs text-neutral-500 dark:text-neutral-400">
-              Powered by{" "}
-              <a
-                href={SPORTS_HACK_2026_LUMA_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-emerald-600 dark:hover:text-emerald-400"
+            <div className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                Get on the list
+              </h3>
+              <p className="mt-3 text-sm text-neutral-700 dark:text-neutral-300">
+                <strong>Sign up on the website.</strong> That&apos;s the only thing
+                that puts you on the door list and inside the credit-band ranking.
+              </p>
+              <Link
+                href={`/hackathons/${SPORTS_HACK_2026_EVENT_ID}/signup`}
+                className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400"
               >
-                Luma
-              </a>
-            </p>
+                {data?.me?.signedUp ? "Manage your signup" : "Sign up on the website"}
+              </Link>
+
+              <div className="mt-5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+                  External RSVPs (optional)
+                </h4>
+                <p className="mt-2 text-xs text-neutral-600 dark:text-neutral-400">
+                  Already RSVP&apos;d on Luma or Partiful? It shows up next to your
+                  name as an interest indicator — but it does not reserve a spot.
+                  Still need to sign up here.
+                </p>
+                <p className="mt-3 text-xs">
+                  <a
+                    href={SPORTS_HACK_2026_LUMA_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-neutral-500 underline hover:text-emerald-600 dark:text-neutral-400 dark:hover:text-emerald-400"
+                  >
+                    Luma event page →
+                  </a>
+                </p>
+              </div>
+            </div>
           </aside>
         </div>
       </div>

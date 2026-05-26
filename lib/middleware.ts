@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -12,18 +13,89 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { checkRateLimit, getClientIdentifier } from "./rate-limit";
+import { getClientIp } from "./client-ip";
 import { logger } from "./logger";
+import { checkUpstashRateLimit } from "./upstash-rate-limit";
+import type { UpstashRateLimitResult } from "./upstash-rate-limit";
 
 // Re-export rateLimitConfigs for convenience
 export { rateLimitConfigs } from "./rate-limit";
 
-// Allowed origins for CSRF protection
+// Allowed production origins for CSRF protection.
 const ALLOWED_ORIGINS = [
   "https://cursorboston.com",
   "https://www.cursorboston.com",
+];
+
+// Local development origins are never accepted in production.
+const DEVELOPMENT_ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://localhost:3001",
 ];
+
+type RateLimitResult = ReturnType<typeof checkRateLimit> | UpstashRateLimitResult;
+
+interface RateLimitBackendOptions {
+  distributed?: boolean;
+  failMode?: "degrade" | "closed";
+  /**
+   * Custom response builder invoked when the rate limiter denies the
+   * request. Default behaviour is the JSON 429 in `rateLimitDeniedResponse`.
+   *
+   * OAuth callbacks override this to redirect to
+   * `?<provider>=error&message=rate_limited` so the user lands back on
+   * the originating page with a clear error instead of staring at a raw
+   * JSON 429 (which is what they saw at the May 26 immersion event
+   * before this hook existed).
+   */
+  onRateLimitDenied?: (
+    request: NextRequest,
+    result: RateLimitResult
+  ) => NextResponse;
+}
+
+function isDevelopmentEnvironment(): boolean {
+  return process.env["NODE_ENV"] === "development";
+}
+
+function isListedOriginAllowed(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    return true;
+  }
+  return isDevelopmentEnvironment() && DEVELOPMENT_ALLOWED_ORIGINS.includes(origin);
+}
+
+function rateLimitDeniedResponse(
+  result: RateLimitResult,
+  options: { windowMs: number; maxRequests: number }
+): NextResponse {
+  const retryAfter = result.retryAfter || 60;
+  const unavailable =
+    "reason" in result && result.reason === "rate_limit_unavailable";
+
+  return NextResponse.json(
+    unavailable
+      ? {
+          error: "Rate limit unavailable",
+          message: "Rate limit temporarily unavailable. Please try again later.",
+          retryAfter,
+        }
+      : {
+          error: "Too many requests",
+          message: `Rate limit exceeded. Please try again in ${retryAfter} seconds.`,
+          retryAfter,
+        },
+    {
+      status: unavailable ? 503 : 429,
+      headers: {
+        "Retry-After": String(retryAfter),
+        "X-RateLimit-Limit": String(options.maxRequests),
+        "X-RateLimit-Remaining": String(result.remaining),
+        "X-RateLimit-Reset": String(result.resetTime),
+      },
+    }
+  );
+}
 
 /**
  * Check if the request origin is allowed (CSRF protection).
@@ -44,12 +116,15 @@ export function isOriginAllowed(request: NextRequest): boolean {
   // If no origin header, check referer (some browsers don't send origin)
   if (!origin && !referer) {
     // Allow requests without origin/referer in development only
-    return process.env.NODE_ENV === "development";
+    return isDevelopmentEnvironment();
   }
 
   // Check if origin matches allowed list
   if (origin) {
-    if (ALLOWED_ORIGINS.includes(origin)) {
+    if (origin === new URL(request.url).origin) {
+      return true;
+    }
+    if (isListedOriginAllowed(origin)) {
       return true;
     }
     // Allow if origin matches the app URL from environment
@@ -64,7 +139,10 @@ export function isOriginAllowed(request: NextRequest): boolean {
   if (referer) {
     try {
       const refererOrigin = new URL(referer).origin;
-      if (ALLOWED_ORIGINS.includes(refererOrigin)) {
+      if (refererOrigin === new URL(request.url).origin) {
+        return true;
+      }
+      if (isListedOriginAllowed(refererOrigin)) {
         return true;
       }
       const appUrl = process.env.NEXT_PUBLIC_APP_URL;
@@ -116,30 +194,23 @@ export function withRateLimitMiddleware(
     windowMs: number;
     maxRequests: number;
   },
-  handler: (request: NextRequest) => Promise<NextResponse>
+  handler: (request: NextRequest) => Promise<NextResponse>,
+  backendOptions: RateLimitBackendOptions = {}
 ) {
   return async (request: NextRequest): Promise<NextResponse> => {
     // Convert NextRequest to Request-like object for identifier extraction
     const identifier = getClientIdentifier(request as unknown as Request);
-    const result = checkRateLimit(identifier, options);
+    const result = backendOptions.distributed
+      ? await checkUpstashRateLimit(identifier, options, {
+          failMode: backendOptions.failMode,
+        })
+      : checkRateLimit(identifier, options);
 
     if (!result.success) {
-      return NextResponse.json(
-        {
-          error: "Too many requests",
-          message: `Rate limit exceeded. Please try again in ${result.retryAfter} seconds.`,
-          retryAfter: result.retryAfter,
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(result.retryAfter || 60),
-            "X-RateLimit-Limit": String(options.maxRequests),
-            "X-RateLimit-Remaining": String(result.remaining),
-            "X-RateLimit-Reset": String(result.resetTime),
-          },
-        }
-      );
+      if (backendOptions.onRateLimitDenied) {
+        return backendOptions.onRateLimitDenied(request, result);
+      }
+      return rateLimitDeniedResponse(result, options);
     }
 
     // Call the handler
@@ -186,12 +257,8 @@ export function withLoggingMiddleware(
         requestId,
       };
 
-      // Get client IP
-      const forwarded = request.headers.get("x-forwarded-for");
-      const realIp = request.headers.get("x-real-ip");
-      const cfConnectingIp = request.headers.get("cf-connecting-ip");
-      const ip = forwarded?.split(",")[0]?.trim() || realIp || cfConnectingIp;
-      if (ip) {
+      const ip = getClientIp(request as unknown as Request);
+      if (ip !== "unknown") {
         metadata.ip = ip;
       }
 
@@ -261,11 +328,12 @@ export function withMiddleware(
     windowMs: number;
     maxRequests: number;
   },
-  handler: (request: NextRequest) => Promise<NextResponse>
+  handler: (request: NextRequest) => Promise<NextResponse>,
+  backendOptions: RateLimitBackendOptions = {}
 ) {
   return withLoggingMiddleware(
     withCsrfProtection(
-      withRateLimitMiddleware(rateLimitOptions, handler)
+      withRateLimitMiddleware(rateLimitOptions, handler, backendOptions)
     )
   );
 }

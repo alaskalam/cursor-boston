@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -9,6 +10,7 @@ import { getVerifiedUser } from "@/lib/server-auth";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { parseRequestBody } from "@/lib/api-response";
+import { authContract } from "@/lib/api-schemas/auth";
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,12 +21,15 @@ export async function POST(request: NextRequest) {
 
     const bodyOrError = await parseRequestBody(request);
     if (bodyOrError instanceof NextResponse) return bodyOrError;
-    const { email } = bodyOrError;
-    if (!email || typeof email !== "string") {
-      return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    const parsed = authContract.removeEmail.body.safeParse(bodyOrError);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Email is required" },
+        { status: 400 }
+      );
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedEmail = parsed.data.email.toLowerCase().trim();
 
     const adminDb = getAdminDb();
     if (!adminDb) {

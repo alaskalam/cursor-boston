@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { DocumentData } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase-admin";
-import { getVerifiedUser } from "@/lib/server-auth";
+import { getVerifiedUser, isCurrentIdTokenRevoked } from "@/lib/server-auth";
 import {
   HACK_A_SPRINT_2026_EVENT_ID,
   fetchShowcaseSubmissionsFromGitHub,
@@ -22,6 +23,8 @@ import {
   resolveVoterGithubByUid,
 } from "@/lib/hackathon-asprint-2026-state";
 import { checkRateLimit, getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
+
+// @contracts: hackathonsContract.hackASprintAdminDashboard (lib/api-schemas/hackathons.ts)
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,8 +55,17 @@ export async function GET(request: NextRequest) {
     }
 
     const user = await getVerifiedUser(request);
-    if (!user?.isAdmin) {
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (!user.isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (await isCurrentIdTokenRevoked(request)) {
+      return NextResponse.json(
+        { error: "Session revoked. Please sign in again." },
+        { status: 401 }
+      );
     }
 
     const db = getAdminDb();

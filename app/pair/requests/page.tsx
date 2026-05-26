@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -9,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
-import Image from "next/image";
+import Avatar from "@/components/Avatar";
 import { useRouter } from "next/navigation";
 import type { PairRequest, SessionType } from "@/lib/pair-programming/types";
 import { doc, getDoc } from "firebase/firestore";
@@ -26,17 +27,15 @@ export default function PairRequestsPage() {
   const [sentRequests, setSentRequests] = useState<PairRequest[]>([]);
   const [receivedRequests, setReceivedRequests] = useState<PairRequest[]>([]);
   const [userProfiles, setUserProfiles] = useState<Record<string, PublicUser>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"sent" | "received">("received");
   const [refreshKey, setRefreshKey] = useState(0);
   const router = useRouter();
 
   useEffect(() => {
     async function fetchRequests() {
-      if (!user || !db) {
-        setLoading(false);
-        return;
-      }
+      if (!user || !db) return;
+      setLoading(true);
 
       try {
         const token = await user.getIdToken();
@@ -241,21 +240,11 @@ function RequestCard({
   return (
     <div className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 p-6">
       <div className="flex items-start gap-4">
-        {otherUser?.photoURL ? (
-          <Image
-            src={otherUser.photoURL}
-            alt={otherUser.displayName || "User"}
-            width={48}
-            height={48}
-            className="w-12 h-12 rounded-full"
-          />
-        ) : (
-          <div className="w-12 h-12 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
-            <span className="text-neutral-500">
-              {otherUser?.displayName?.[0]?.toUpperCase() || "?"}
-            </span>
-          </div>
-        )}
+        <Avatar
+          src={otherUser?.photoURL}
+          name={otherUser?.displayName}
+          size={48}
+        />
         <div className="flex-1">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold">

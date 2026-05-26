@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,15 +8,19 @@
 "use client";
 
 import { ExternalLink, Rocket, Video } from "lucide-react";
-import {
-  SUMMER_COHORT_C1_WEEK_5,
-  SUMMER_COHORT_C1_ZOOM_URL_PLACEHOLDER,
-} from "@/lib/summer-cohort";
+import { type SummerCohortWeek5 } from "@/lib/summer-cohort";
 
-export function Week5StartupPanel() {
-  const week = SUMMER_COHORT_C1_WEEK_5;
-  const zoomUrl = SUMMER_COHORT_C1_ZOOM_URL_PLACEHOLDER;
+interface Week5StartupPanelProps {
+  week: SummerCohortWeek5;
+  cohortLabel: string;
+  zoomUrl: string;
+}
 
+export function Week5StartupPanel({
+  week,
+  cohortLabel,
+  zoomUrl,
+}: Week5StartupPanelProps) {
   return (
     <section
       role="tabpanel"
@@ -25,7 +30,7 @@ export function Week5StartupPanel() {
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center rounded-full bg-emerald-500 px-3 py-1 text-xs font-bold uppercase tracking-wider text-white">
-          Cohort 1 · Week 5
+          {cohortLabel} · Week 5
         </span>
         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
           <Rocket className="h-3 w-3" strokeWidth={2.25} aria-hidden="true" />

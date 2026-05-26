@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -6,6 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath, revalidateTag } from "next/cache";
+import { FieldValue } from "firebase-admin/firestore";
 import {
   verifyWebhookSignature,
   processPullRequest,
@@ -17,6 +19,8 @@ import {
   SHOWCASE_SUBMISSIONS_CACHE_TAG,
 } from "@/lib/hackathon-showcase";
 import { MERGED_PR_COUNTS_CACHE_TAG } from "@/lib/github-merged-pr-count";
+import { HACKATHON_EVENT_SIGNUP_IDS } from "@/lib/hackathon-event-signup";
+import { refreshSnapshot } from "@/lib/hackathon-leaderboard-snapshot";
 import { ensureHackASprint2026ScoreDoc } from "@/lib/hackathon-asprint-2026-scores";
 import { awardHackASprint2026ShowcaseBadge } from "@/lib/hackathon-showcase-admin";
 import { maybeAutoAdmitOnPRMerge } from "@/lib/summer-cohort-auto-admit";
@@ -26,11 +30,65 @@ import { withLoggingMiddleware, withRateLimitMiddleware, rateLimitConfigs } from
 import { logger } from "@/lib/logger";
 import { getClientIdentifier } from "@/lib/rate-limit";
 
+// @contracts: githubContract.webhook (lib/api-schemas/github.ts) — body is HMAC-verified before any contract validation.
+
 // Disable body parsing to get raw body for signature verification
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_WEBHOOK_BODY_BYTES = 1_000_000;
+const GITHUB_WEBHOOK_DELIVERIES_COLLECTION = "githubWebhookDeliveries";
+
+type DeliveryClaimResult = { duplicate: boolean };
+
+function isAlreadyExistsFirestoreError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  return (
+    code === 6 ||
+    code === "already-exists" ||
+    code === "ALREADY_EXISTS"
+  );
+}
+
+async function claimGitHubWebhookDelivery(
+  deliveryId: string | null,
+  eventType: string | null
+): Promise<DeliveryClaimResult> {
+  const normalizedDeliveryId = deliveryId?.trim();
+  if (!normalizedDeliveryId) {
+    return { duplicate: false };
+  }
+
+  const db = getAdminDb();
+  if (!db) {
+    logger.warn(
+      "Skipping GitHub webhook idempotency; Firebase Admin is not configured",
+      {
+        endpoint: "/api/github/webhook",
+        eventType,
+      }
+    );
+    return { duplicate: false };
+  }
+
+  try {
+    await db
+      .collection(GITHUB_WEBHOOK_DELIVERIES_COLLECTION)
+      .doc(normalizedDeliveryId)
+      .create({
+        deliveryId: normalizedDeliveryId,
+        eventType,
+        receivedAt: FieldValue.serverTimestamp(),
+      });
+    return { duplicate: false };
+  } catch (error) {
+    if (isAlreadyExistsFirestoreError(error)) {
+      return { duplicate: true };
+    }
+    throw error;
+  }
+}
 
 async function handleWebhook(request: NextRequest) {
   try {
@@ -78,6 +136,7 @@ async function handleWebhook(request: NextRequest) {
     }
 
     const eventType = request.headers.get("x-github-event");
+    const deliveryId = request.headers.get("x-github-delivery");
 
     // Only process pull_request events
     if (eventType !== "pull_request") {
@@ -97,6 +156,14 @@ async function handleWebhook(request: NextRequest) {
         { error: "Invalid payload structure" },
         { status: 400 }
       );
+    }
+
+    const deliveryClaim = await claimGitHubWebhookDelivery(
+      deliveryId,
+      eventType
+    );
+    if (deliveryClaim.duplicate) {
+      return NextResponse.json({ received: true, action, duplicate: true });
     }
 
     // Process pull request events (opened, closed, synchronize, reopened)
@@ -203,6 +270,24 @@ async function handleWebhook(request: NextRequest) {
         // Merged PR counts caches go stale on every merge — refresh.
         try {
           revalidateTag(MERGED_PR_COUNTS_CACHE_TAG, { expire: 0 });
+        } catch {
+          // non-fatal
+        }
+
+        // GET /api/hackathons/events/:eventId/signup serves a persisted
+        // Firestore snapshot. Refresh it after PR merges so the public
+        // leaderboard reflects newly earned merged-PR credit.
+        try {
+          const refreshResults = await Promise.allSettled(
+            HACKATHON_EVENT_SIGNUP_IDS.map((eventId) => refreshSnapshot(eventId))
+          );
+          const failed = refreshResults.filter((r) => r.status === "rejected").length;
+          if (failed > 0) {
+            logger.warn("Hackathon signup leaderboard snapshot refresh failed", {
+              failed,
+              total: refreshResults.length,
+            });
+          }
         } catch {
           // non-fatal
         }

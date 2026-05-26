@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -25,6 +26,8 @@ import {
   hackathonEventSignupDocId,
   profileMatchesHackathonJudgeCheckinException,
 } from "@/lib/hackathon-event-signup";
+
+// @contracts: hackathonsContract.hackASprintMe (lib/api-schemas/hackathons.ts)
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -121,7 +122,7 @@ export default function PyDataAdminPage() {
   const { user, loading: authLoading } = useAuth();
   const [data, setData] = useState<Response | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [lastRefresh, setLastRefresh] = useState<string>("");
 

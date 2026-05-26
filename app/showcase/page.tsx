@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -11,6 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import showcaseData from "@/content/showcase.json";
 import { NeedsWorkBanner } from "@/components/NeedsWorkBanner";
+import { SectionHelp } from "@/components/SectionHelp";
 
 interface ProjectContact {
   github?: string;
@@ -87,6 +89,11 @@ export default function ShowcasePage() {
   const [talkModerationSubmissions, setTalkModerationSubmissions] = useState<
     TalkModerationSubmission[]
   >([]);
+  // Cursor-based pagination for the pending talk queue. Approved/completed
+  // buckets keep the original (capped) one-shot fetch — only pending grows
+  // unbounded under load, so that's where Load more matters.
+  const [talkPendingNextCursor, setTalkPendingNextCursor] = useState<string | null>(null);
+  const [loadingMoreTalkPending, setLoadingMoreTalkPending] = useState(false);
   const [moderatingSubmissionId, setModeratingSubmissionId] = useState<string | null>(null);
 
   // Fetch vote data
@@ -225,6 +232,7 @@ export default function ShowcasePage() {
 
   useEffect(() => {
     if (!user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on sign-out is the intended sync into React state
       setSubmittedProjects({});
       return;
     }
@@ -271,9 +279,11 @@ export default function ShowcasePage() {
 
   useEffect(() => {
     if (!user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on sign-out is the intended sync into React state
       setIsAdminOperator(false);
       setPendingSubmissions([]);
       setTalkModerationSubmissions([]);
+      setTalkPendingNextCursor(null);
       setAdminFeedback(null);
       return;
     }
@@ -317,11 +327,23 @@ export default function ShowcasePage() {
           const talkPayload = (await talkRes.json()) as {
             talkSubmissions?: TalkModerationSubmission[];
           };
-          setTalkModerationSubmissions(
-            Array.isArray(talkPayload.talkSubmissions) ? talkPayload.talkSubmissions : []
+          const submissions = Array.isArray(talkPayload.talkSubmissions)
+            ? talkPayload.talkSubmissions
+            : [];
+          setTalkModerationSubmissions(submissions);
+          // The default endpoint caps each status at 100 in one shot. If the
+          // pending bucket is at the cap, expose a Load more button cursored
+          // off the last pending item so admins can page beyond it.
+          const pendingItems = submissions.filter((s) => s.status === "pending");
+          const lastPending = pendingItems[pendingItems.length - 1];
+          setTalkPendingNextCursor(
+            pendingItems.length >= 100 && lastPending
+              ? lastPending.submissionId
+              : null
           );
         } else {
           setTalkModerationSubmissions([]);
+          setTalkPendingNextCursor(null);
         }
       } catch {
         if (!active) return;
@@ -458,6 +480,48 @@ export default function ShowcasePage() {
     [isAdminOperator, moderatingSubmissionId, user]
   );
 
+  const handleLoadMoreTalkPending = useCallback(async () => {
+    if (!user || !talkPendingNextCursor || loadingMoreTalkPending) return;
+    setLoadingMoreTalkPending(true);
+    setAdminFeedback(null);
+    try {
+      const { getIdToken } = await import("firebase/auth");
+      const token = await getIdToken(user);
+      const params = new URLSearchParams();
+      params.set("status", "pending");
+      params.set("limit", "20");
+      params.set("cursor", talkPendingNextCursor);
+      const res = await fetch(`/api/talks/submission/moderate?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        setAdminFeedback({
+          type: "error",
+          message: payload.error || "Could not load more pending talks.",
+        });
+        return;
+      }
+      const payload = (await res.json()) as {
+        talkSubmissions?: TalkModerationSubmission[];
+        nextCursor?: string | null;
+        hasMore?: boolean;
+      };
+      const newItems = Array.isArray(payload.talkSubmissions)
+        ? payload.talkSubmissions
+        : [];
+      setTalkModerationSubmissions((prev) => [...prev, ...newItems]);
+      setTalkPendingNextCursor(payload.nextCursor ?? null);
+    } catch {
+      setAdminFeedback({
+        type: "error",
+        message: "Could not load more pending talks.",
+      });
+    } finally {
+      setLoadingMoreTalkPending(false);
+    }
+  }, [user, talkPendingNextCursor, loadingMoreTalkPending]);
+
   // Sort projects by net votes (descending)
   const sortedProjects = [...(showcaseData.projects as Project[])].sort(
     (a, b) => getNetScore(votes, b.id) - getNetScore(votes, a.id)
@@ -485,6 +549,37 @@ export default function ShowcasePage() {
           </p>
         </div>
       </section>
+
+      <div className="px-6 py-6 max-w-4xl mx-auto w-full">
+        <SectionHelp
+          title="About the showcase"
+          intro={
+            <>
+              A gallery of projects built by community members. Submit your
+              own to get visibility; vote on others to surface the best.
+              Submissions go through light moderation before they appear.
+            </>
+          }
+          faq={[
+            {
+              q: "Who can submit?",
+              a: "Any signed-in member. The project should be yours (or you should have permission from the team) and built with substantial AI/Cursor use.",
+            },
+            {
+              q: "How does voting work?",
+              a: "One up- or down-vote per member per project. Top-voted projects appear first; you can switch sort order.",
+            },
+            {
+              q: "How long does approval take?",
+              a: "Usually under a week. We check for spam, broken links, and obvious mismatches. Resubmit after fixing if rejected.",
+            },
+          ]}
+          links={[
+            { label: "Add other content (blog, talks)", href: "/open-source" },
+            { label: "Hackathon submissions", href: "/hackathons" },
+          ]}
+        />
+      </div>
 
       {/* How to Submit Banner */}
       <section className="px-6 py-10 border-b border-neutral-800 bg-neutral-950">
@@ -783,6 +878,19 @@ export default function ShowcasePage() {
                     ))}
                   </div>
                 )}
+
+                {talkPendingNextCursor && (
+                  <div className="mt-3 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => void handleLoadMoreTalkPending()}
+                      disabled={loadingMoreTalkPending}
+                      className="px-3 py-1.5 rounded-md text-xs font-medium bg-neutral-800 text-neutral-200 hover:bg-neutral-700 disabled:opacity-60"
+                    >
+                      {loadingMoreTalkPending ? "Loading…" : "Load more pending"}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -858,6 +966,7 @@ function ProjectCard({
             alt={project.name}
             fill
             className="object-cover"
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
             onError={() => setImgError(true)}
           />
         ) : (

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -11,6 +12,7 @@ import { getVerifiedUser } from "@/lib/server-auth";
 import { getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
 import { sanitizeDocId } from "@/lib/sanitize";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,16 +46,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Server not configured" }, { status: 500 });
     }
 
-    let body: { inviteId?: unknown };
+    let body: unknown;
     try {
-      body = (await request.json()) as { inviteId?: unknown };
+      body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-    const { inviteId } = body;
-    
-    // Validate and sanitize inviteId
-    const sanitizedInviteId = sanitizeDocId(typeof inviteId === "string" ? inviteId : "");
+    const parsed = hackathonsContract.inviteAccept.body.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
+    const sanitizedInviteId = sanitizeDocId(parsed.data.inviteId);
     if (!sanitizedInviteId) {
       return NextResponse.json({ error: "Invalid inviteId format" }, { status: 400 });
     }

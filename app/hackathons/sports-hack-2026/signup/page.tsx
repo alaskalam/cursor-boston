@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -6,18 +7,24 @@
 
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { GitHubIcon, DiscordIcon } from "@/components/icons";
+import { SportsHack2026EventNav } from "@/components/hackathons/SportsHack2026EventNav";
+import { trackEvent } from "@/lib/analytics";
+import { useGithubConnection } from "@/app/(auth)/profile/_hooks/useGithubConnection";
 import {
+  SPORTS_HACK_2026_ATTENDANCE_LIMIT,
   SPORTS_HACK_2026_CAPACITY,
   SPORTS_HACK_2026_EVENT_ID,
-  SPORTS_HACK_2026_LUMA_URL,
   SPORTS_HACK_2026_SHORT_NAME,
   getSportsHack2026RankTier,
   type SportsHack2026RankTone,
 } from "@/lib/sports-hack-2026";
+
+const SPORTS_HACK_RETURN_TO = "/hackathons/sports-hack-2026/signup";
 
 const TONE_PILL_CLASS: Record<SportsHack2026RankTone, string> = {
   hot: "bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:text-emerald-300",
@@ -39,23 +46,31 @@ const TONE_BANNER_CLASS: Record<SportsHack2026RankTone, string> = {
   far: "border-rose-500/40 bg-rose-500/5 dark:bg-rose-500/10",
 };
 
+// External-RSVP indicators. As of 2026-05-24 the website signup is the
+// source of truth — Luma + Partiful RSVPs are informational only. So both
+// pills are rendered only when present; the absence of a pill carries no
+// negative implication (vs the previous behavior of warning "Not on Luma
+// yet" which is no longer accurate).
 function LumaPill({ registered }: { registered: boolean | undefined }) {
-  if (registered) {
-    return (
-      <span
-        className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
-        title="Matched to a registration in the latest Luma export"
-      >
-        ✓ On Luma
-      </span>
-    );
-  }
+  if (!registered) return null;
   return (
     <span
-      className="inline-flex items-center rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-xs font-semibold text-rose-700 dark:text-rose-400"
-      title="No matching Luma registration found (by email or GitHub login)"
+      className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
+      title="Matched to a registration in the latest Luma export"
     >
-      ⚠ Not on Luma yet
+      ✓ On Luma
+    </span>
+  );
+}
+
+function PartifulPill({ registered }: { registered: boolean | undefined }) {
+  if (!registered) return null;
+  return (
+    <span
+      className="inline-flex items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-400"
+      title="Matched to a Going RSVP in the latest Partiful export"
+    >
+      ✓ On Partiful
     </span>
   );
 }
@@ -74,7 +89,17 @@ type LeaderboardEntry = {
   willBeLate?: boolean;
   queuingForSpot?: boolean;
   lumaRegistered?: boolean;
+  partifulRegistered?: boolean;
   isCohort1?: boolean;
+  attendingConfirmed?: boolean;
+  attendingConfirmedAt?: string | null;
+  attendanceRank?: number | null;
+  // Three-tier ranking model fields (sports-hack-2026). Optional for
+  // back-compat with old snapshots and freeze-model events.
+  tier?: "A" | "B" | "C" | null;
+  inAttendanceBand?: boolean;
+  inCreditBand?: boolean;
+  hasSubmission?: boolean;
 };
 
 type LeaderboardResponse = {
@@ -83,6 +108,8 @@ type LeaderboardResponse = {
   websiteSignupCount?: number;
   entries: LeaderboardEntry[];
   creditTopN: number;
+  confirmedAttendeeCount?: number;
+  attendanceLimit?: number;
   me: {
     signedUp: boolean;
     rank: number | null;
@@ -92,6 +119,14 @@ type LeaderboardResponse = {
     willBeLate: boolean;
     queuingForSpot: boolean;
     lumaRegistered: boolean;
+    partifulRegistered?: boolean;
+    attendingConfirmed?: boolean;
+    attendingConfirmedAt?: string | null;
+    attendanceRank?: number | null;
+    tier?: "A" | "B" | "C" | null;
+    inAttendanceBand?: boolean;
+    inCreditBand?: boolean;
+    hasSubmission?: boolean;
   } | null;
 };
 
@@ -126,8 +161,16 @@ function profileFromContext(
   };
 }
 
-export default function SportsHack2026SignupPage() {
-  const { user, userProfile, loading: authLoading } = useAuth();
+function SportsHack2026SignupPageInner() {
+  const { user, userProfile, loading: authLoading, refreshUserProfile } = useAuth();
+  const searchParams = useSearchParams();
+  const github = useGithubConnection(
+    user,
+    userProfile?.github,
+    userProfile?.provider,
+    refreshUserProfile,
+    SPORTS_HACK_RETURN_TO
+  );
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [profile, setProfile] = useState<ProfileStatus | null>(
     profileFromContext(userProfile)
@@ -142,6 +185,17 @@ export default function SportsHack2026SignupPage() {
   const eventId = SPORTS_HACK_2026_EVENT_ID;
   const capacity = SPORTS_HACK_2026_CAPACITY;
   const apiUrl = `/api/hackathons/events/${eventId}/signup`;
+
+  const trackAuthCta = (cta: "sign_in" | "create_account") => {
+    void trackEvent(
+      cta === "sign_in" ? "sign_in_cta_click" : "sign_up_cta_click",
+      {
+        cta,
+        event_id: eventId,
+        surface: "hackathon_signup",
+      }
+    );
+  };
 
   useEffect(() => {
     const fromCtx = profileFromContext(userProfile);
@@ -199,6 +253,31 @@ export default function SportsHack2026SignupPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount, state set inside async callback
     if (user) void loadProfile();
   }, [user, loadProfile]);
+
+  // GitHub OAuth callback lands back here with ?github=success|error.
+  // Without this handler, users got bounced to /profile and never returned
+  // to the signup flow — which is why event attendees were re-clicking
+  // Connect and burning the per-IP rate-limit bucket.
+  useEffect(() => {
+    if (authLoading) return;
+    const githubStatus = searchParams.get("github");
+    if (!githubStatus) return;
+    if (githubStatus === "success") {
+      const data = searchParams.get("data");
+      if (data) {
+        try {
+          github.handleOAuthSuccess(JSON.parse(decodeURIComponent(data)));
+        } catch {
+          github.handleOAuthError(searchParams.get("message"));
+        }
+      } else {
+        github.handleOAuthError(searchParams.get("message"));
+      }
+    } else if (githubStatus === "error") {
+      github.handleOAuthError(searchParams.get("message"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, authLoading]);
 
   const isProfileReady =
     profile?.visibility?.isPublic === true &&
@@ -293,6 +372,42 @@ export default function SportsHack2026SignupPage() {
     }
   };
 
+  const toggleAttendingConfirmation = async (confirming: boolean) => {
+    if (!user) return;
+    setRsvpBusy(true);
+    setError(null);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(
+        `/api/hackathons/events/${eventId}/confirm-attendance`,
+        {
+          method: confirming ? "POST" : "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          json.error ||
+            (confirming
+              ? "Could not confirm attendance"
+              : "Could not un-confirm")
+        );
+      }
+      await load();
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : confirming
+            ? "Could not confirm attendance"
+            : "Could not un-confirm"
+      );
+    } finally {
+      setRsvpBusy(false);
+    }
+  };
+
   const handleLeave = async () => {
     if (!user) return;
     if (!window.confirm("Remove yourself from the website signup list?")) return;
@@ -355,7 +470,7 @@ export default function SportsHack2026SignupPage() {
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <div className="mx-auto max-w-4xl px-6 py-12 md:py-16">
-        <nav className="mb-8 text-sm text-neutral-500 dark:text-neutral-400">
+        <nav className="mb-4 text-sm text-neutral-500 dark:text-neutral-400">
           <Link
             href="/hackathons"
             className="hover:text-emerald-600 dark:hover:text-emerald-400"
@@ -373,23 +488,18 @@ export default function SportsHack2026SignupPage() {
           <span className="text-neutral-700 dark:text-neutral-300">Signup</span>
         </nav>
 
+        <SportsHack2026EventNav />
+
         <h1 className="text-3xl font-bold tracking-tight md:text-4xl">
           {SPORTS_HACK_2026_SHORT_NAME} — website signup
         </h1>
         <p className="mt-4 text-lg text-neutral-600 dark:text-neutral-400">
-          This page is the on-site signup list for the Boston Tech Week Sports Hack.
-          It does not replace{" "}
-          <a
-            href={SPORTS_HACK_2026_LUMA_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-emerald-600 underline hover:text-emerald-500 dark:text-emerald-400"
-          >
-            Luma registration
-          </a>
-          —you still need Luma for event admission. After that, claim a spot below so we
-          can rank builders by merged PRs to cursor-boston, then by signup time, for
-          invitations and the top-{capacity} confirmed band.
+          This is the canonical signup list for the Boston Tech Week Sports Hack —
+          claim a spot and confirm attendance here to be on the door list and in
+          the credit-band ranking. Builders are ranked by merged PRs to
+          cursor-boston, then by signup time, for the top-{capacity}
+          {" "}confirmed band. A Luma or Partiful RSVP shows up as an indicator next to your
+          name but doesn&apos;t replace this signup.
         </p>
 
         <div className="mt-8 rounded-2xl border border-neutral-200 bg-white p-6 dark:border-neutral-800 dark:bg-neutral-900">
@@ -412,8 +522,7 @@ export default function SportsHack2026SignupPage() {
             </li>
             <li>
               The top {capacity} on this list are in the band eligible for a{" "}
-              <strong>confirmed seat</strong> on May 26 (subject to event selection and
-              Luma rules).
+              <strong>confirmed seat</strong> on May 26 (subject to event selection).
             </li>
           </ol>
         </div>
@@ -431,12 +540,14 @@ export default function SportsHack2026SignupPage() {
                 <Link
                   href={`/login?redirect=${encodeURIComponent(`/hackathons/${eventId}/signup`)}`}
                   className="inline-flex items-center justify-center rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400"
+                  onClick={() => trackAuthCta("sign_in")}
                 >
                   Sign in
                 </Link>
                 <Link
                   href={`/signup?redirect=${encodeURIComponent(`/hackathons/${eventId}/signup`)}`}
                   className="inline-flex items-center justify-center rounded-lg border border-neutral-300 px-5 py-2.5 text-sm font-semibold hover:bg-neutral-100 dark:border-neutral-600 dark:hover:bg-neutral-800"
+                  onClick={() => trackAuthCta("create_account")}
                 >
                   Create account
                 </Link>
@@ -464,6 +575,7 @@ export default function SportsHack2026SignupPage() {
                             </span>
                           ) : null}
                           <LumaPill registered={data.me?.lumaRegistered} />
+                          <PartifulPill registered={data.me?.partifulRegistered} />
                         </div>
                         {myRank != null && (
                           <p className="mt-1 text-neutral-700 dark:text-neutral-300">
@@ -482,21 +594,15 @@ export default function SportsHack2026SignupPage() {
                             {tier.detail}
                           </p>
                         ) : null}
-                        {data.me && !data.me.lumaRegistered ? (
-                          <p className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-                            <strong>You&apos;re not on the Luma list yet.</strong>{" "}
-                            Website signup alone won&apos;t get you through the door —{" "}
-                            <a
-                              href={SPORTS_HACK_2026_LUMA_URL}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="underline font-medium"
-                            >
-                              RSVP on Luma now
-                            </a>
-                            .
-                          </p>
-                        ) : null}
+                        {/*
+                          Previously rendered a rose-colored "You're not on the
+                          Luma list yet" warning here. Dropped 2026-05-24 along
+                          with the rest of the Luma-prominence: the website
+                          signup is now the source of truth, so being absent
+                          from Luma is informational, not a problem. Luma /
+                          Partiful pills above still surface presence when it
+                          exists.
+                        */}
                       </div>
                       <div className="flex gap-3 shrink-0">
                         <button
@@ -520,6 +626,127 @@ export default function SportsHack2026SignupPage() {
                   </div>
                 );
               })()}
+
+              {/* Attendance confirmation card — second step beyond claim. */}
+              {(() => {
+                const meConfirmed = data.me?.attendingConfirmed === true;
+                const attendingCount = data.confirmedAttendeeCount ?? 0;
+                const attendanceLimit =
+                  data.attendanceLimit ?? SPORTS_HACK_2026_ATTENDANCE_LIMIT;
+                const myAttendanceRank = data.me?.attendanceRank ?? null;
+                const onWaitlist =
+                  meConfirmed &&
+                  attendanceLimit > 0 &&
+                  myAttendanceRank != null &&
+                  myAttendanceRank > attendanceLimit;
+                return (
+                  <div
+                    className={`mt-6 rounded-2xl border p-6 ${
+                      meConfirmed
+                        ? "border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10"
+                        : "border-amber-500/40 bg-amber-500/5 dark:bg-amber-500/10"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="text-sm">
+                        <h2 className="font-semibold text-foreground">
+                          {meConfirmed
+                            ? onWaitlist
+                              ? "Confirmed — currently on the waitlist"
+                              : "Confirmed — you're attending (Tier A)"
+                            : "Step 2: Confirm you'll attend — locks in Tier A"}
+                        </h2>
+                        <p className="mt-1 text-neutral-700 dark:text-neutral-300">
+                          {meConfirmed
+                            ? onWaitlist
+                              ? `Confirmed attendees beyond #${attendanceLimit} (you're #${myAttendanceRank}) can still show up but are not guaranteed entry. Climbing the leaderboard moves you above the cutoff.`
+                              : myAttendanceRank != null
+                                ? `You're confirmed attendee #${myAttendanceRank} of ${attendanceLimit} guaranteed seats.`
+                                : "Your attendance is confirmed."
+                            : "Claiming reserves a rank slot. Confirming attendance is the second step — it moves you into Tier A (above everyone who only claimed) and counts toward the pre-event headcount we share with the venue. Top 200 confirmed by rank are guaranteed entry; top 119 are credit-eligible after opening a submission PR."}
+                        </p>
+                        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+                          {attendingCount} of {attendanceLimit} confirmed attending site-wide.
+                        </p>
+                      </div>
+                      <div className="shrink-0">
+                        {meConfirmed ? (
+                          <button
+                            type="button"
+                            disabled={rsvpBusy}
+                            onClick={() => void toggleAttendingConfirmation(false)}
+                            className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-600 dark:hover:bg-neutral-800"
+                          >
+                            I can&apos;t make it
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={rsvpBusy}
+                            onClick={() => void toggleAttendingConfirmation(true)}
+                            className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-400 disabled:opacity-50"
+                          >
+                            Confirm attendance
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Tier-A + credit band + no submission = the final UX nudge.
+                  Tells the user they're in the 119-credit band but the credit
+                  itself only unlocks once they open a submission PR. Renders
+                  pre-event with "on event day" framing; same card stays useful
+                  post-event for last-minute submitters. */}
+              {data.me?.tier === "A" &&
+              data.me?.inCreditBand === true &&
+              data.me?.hasSubmission === false ? (
+                <div className="mt-6 rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-6 dark:bg-emerald-500/10">
+                  <h2 className="font-semibold text-foreground">
+                    You&apos;re in the credit band — finish your submission to unlock it
+                  </h2>
+                  <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
+                    Your Tier-A rank puts you inside the top {capacity} credit
+                    slots, but a Cursor credit only goes out if you also open a
+                    submission PR. On event day, push a folder named after your
+                    GitHub handle into the{" "}
+                    <code className="rounded bg-neutral-200 px-1 py-0.5 text-xs dark:bg-neutral-800">
+                      sports-hack-2026-submissions
+                    </code>{" "}
+                    branch with a <code className="rounded bg-neutral-200 px-1 py-0.5 text-xs dark:bg-neutral-800">meta.json</code>{" "}
+                    (title, description, videoUrl, repoUrl, deployedUrl).
+                  </p>
+                  <p className="mt-3 text-sm">
+                    <a
+                      href="https://github.com/rogerSuperBuilderAlpha/cursor-boston/blob/main/sports-hack-2026-submissions/README.md"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-emerald-700 underline hover:text-emerald-600 dark:text-emerald-400"
+                    >
+                      Submission template + field reference →
+                    </a>
+                  </p>
+                </div>
+              ) : null}
+
+              {/* Tier-A + credit band + submission opened — confirmation card. */}
+              {data.me?.tier === "A" &&
+              data.me?.inCreditBand === true &&
+              data.me?.hasSubmission === true ? (
+                <div className="mt-6 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-6 dark:bg-emerald-500/15">
+                  <h2 className="font-semibold text-foreground">
+                    Credit-eligible ✓ Submission detected
+                  </h2>
+                  <p className="mt-1 text-sm text-neutral-700 dark:text-neutral-300">
+                    Tier A · in the top-{capacity} credit band · submission PR
+                    detected. You&apos;re locked in for a Cursor credit code,
+                    assuming your submission stays open through the 4 PM ET
+                    deadline.
+                  </p>
+                </div>
+              ) : null}
 
               {/* Pre-freeze info card (replaces the day-of RSVP controls until a real confirmed/waitlist split exists) */}
               {preFreeze ? (
@@ -766,13 +993,15 @@ export default function SportsHack2026SignupPage() {
                         <GitHubIcon size={16} />@{profile.githubUsername}
                       </span>
                     ) : (
-                      <a
-                        href="/api/github/authorize"
-                        className="inline-flex items-center gap-2 rounded-lg bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 transition-colors dark:bg-neutral-700 dark:hover:bg-neutral-600"
+                      <button
+                        type="button"
+                        onClick={github.connect}
+                        disabled={github.connecting}
+                        className="inline-flex items-center gap-2 rounded-lg bg-neutral-800 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 transition-colors disabled:opacity-60 dark:bg-neutral-700 dark:hover:bg-neutral-600"
                       >
                         <GitHubIcon size={16} />
-                        Connect GitHub
-                      </a>
+                        {github.connecting ? "Connecting…" : "Connect GitHub"}
+                      </button>
                     )}
                   </div>
 
@@ -943,9 +1172,17 @@ export default function SportsHack2026SignupPage() {
                       // Post-freeze: divide between confirmed/waitlisted as the API reports.
                       const inTopN = row.rank <= data.creditTopN;
                       const prevInTopN = prev ? prev.rank <= data.creditTopN : false;
-                      const showWaitlistDivider = preFreeze
+                      const showCreditCutoffDivider = preFreeze
                         ? !inTopN && prevInTopN
                         : status === "waitlisted" && prevStatus === "confirmed";
+
+                      // Three-tier model dividers (sports-hack-2026). Render at
+                      // the first row of each tier transition so the visual
+                      // ladder A → B → C is unmistakable.
+                      const showTierAtoBDivider = row.tier === "B" && prev?.tier === "A";
+                      const showTierBtoCDivider = row.tier === "C" && prev?.tier === "B";
+                      const showTierAtoCDivider =
+                        row.tier === "C" && prev?.tier === "A"; // no Tier B people at all
 
                       const rowHighlight = preFreeze
                         ? inTopN
@@ -955,22 +1192,57 @@ export default function SportsHack2026SignupPage() {
                           ? "bg-emerald-500/5 dark:bg-emerald-500/10"
                           : "";
 
-                      const tier = preFreeze ? getSportsHack2026RankTier(row.rank) : null;
+                      const rankTier = preFreeze ? getSportsHack2026RankTier(row.rank) : null;
+                      const engagementTier = row.tier ?? null;
 
                       return (
                         <React.Fragment key={row.userId ?? `luma-${row.rank}`}>
-                          {showWaitlistDivider && (
+                          {showTierAtoBDivider && (
                             <tr>
                               <td
                                 colSpan={5}
                                 className="px-4 py-3 bg-amber-500/10 dark:bg-amber-500/20 border-t-2 border-amber-500/30"
                               >
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                   <span className="text-sm font-bold text-amber-700 dark:text-amber-400">
-                                    {preFreeze ? `Below the top-${data.creditTopN} cut` : "Waitlist starts here"}
+                                    Tier B starts here
                                   </span>
                                   <span className="text-xs text-amber-600 dark:text-amber-500">
-                                    — merge PRs to the community repo to climb into the top {data.creditTopN}
+                                    — claimed but haven&apos;t confirmed attendance. Click &ldquo;Confirm attendance&rdquo; on your signup card to move into Tier A.
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          {(showTierBtoCDivider || showTierAtoCDivider) && (
+                            <tr>
+                              <td
+                                colSpan={5}
+                                className="px-4 py-3 bg-neutral-200/60 dark:bg-neutral-800/60 border-t-2 border-neutral-300 dark:border-neutral-700"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-bold text-neutral-700 dark:text-neutral-300">
+                                    Tier C starts here
+                                  </span>
+                                  <span className="text-xs text-neutral-600 dark:text-neutral-400">
+                                    — Luma/Partiful RSVP only, no website claim. Sign in and claim a spot to enter the active ranking.
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                          {showCreditCutoffDivider && (
+                            <tr>
+                              <td
+                                colSpan={5}
+                                className="px-4 py-3 bg-rose-500/10 dark:bg-rose-500/20 border-t-2 border-rose-500/30"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-bold text-rose-700 dark:text-rose-400">
+                                    Top {data.creditTopN} credit cutoff
+                                  </span>
+                                  <span className="text-xs text-rose-600 dark:text-rose-500">
+                                    — only the top {data.creditTopN} ranked attendees are eligible for a Cursor credit (after opening a submission PR).
                                   </span>
                                 </div>
                               </td>
@@ -1009,12 +1281,33 @@ export default function SportsHack2026SignupPage() {
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col gap-1 items-start">
-                                {tier ? (
+                                {engagementTier === "A" ? (
                                   <span
-                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${TONE_PILL_CLASS[tier.tone]}`}
-                                    title={tier.detail}
+                                    className="inline-flex items-center rounded-full bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300"
+                                    title="Tier A — claimed and user-confirmed attendance"
                                   >
-                                    {tier.label}
+                                    Tier A · confirmed
+                                  </span>
+                                ) : engagementTier === "B" ? (
+                                  <span
+                                    className="inline-flex items-center rounded-full bg-amber-500/15 border border-amber-500/40 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300"
+                                    title="Tier B — claimed a spot but hasn't clicked Confirm Attendance"
+                                  >
+                                    Tier B · claimed
+                                  </span>
+                                ) : engagementTier === "C" ? (
+                                  <span
+                                    className="inline-flex items-center rounded-full bg-neutral-300/40 border border-neutral-400/40 px-2 py-0.5 text-xs font-semibold text-neutral-700 dark:bg-neutral-700/40 dark:text-neutral-300"
+                                    title="Tier C — external Luma/Partiful RSVP only, no website signup"
+                                  >
+                                    Tier C · RSVP only
+                                  </span>
+                                ) : rankTier ? (
+                                  <span
+                                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${TONE_PILL_CLASS[rankTier.tone]}`}
+                                    title={rankTier.detail}
+                                  >
+                                    {rankTier.label}
                                   </span>
                                 ) : status === "confirmed" ? (
                                   <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
@@ -1025,15 +1318,24 @@ export default function SportsHack2026SignupPage() {
                                     Waitlist
                                   </span>
                                 )}
+                                {row.hasSubmission ? (
+                                  <span
+                                    className="inline-flex items-center rounded-full bg-emerald-500/15 border border-emerald-500/40 px-2 py-0.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300"
+                                    title="A submission PR has been opened on this attendee's GitHub login"
+                                  >
+                                    ✓ Submitted
+                                  </span>
+                                ) : null}
                                 {row.isCohort1 ? (
                                   <span
                                     className="inline-flex items-center rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:text-violet-400"
-                                    title="Summer Cohort 1 applicant — prioritized in the May 26 immersion ranking"
+                                    title="Summer Cohort 1 applicant (informational — cohort-1 boost was removed from the May 26 ranking)"
                                   >
                                     Cohort 1
                                   </span>
                                 ) : null}
                                 <LumaPill registered={row.lumaRegistered} />
+                                <PartifulPill registered={row.partifulRegistered} />
                               </div>
                             </td>
                           </tr>
@@ -1048,8 +1350,8 @@ export default function SportsHack2026SignupPage() {
         </div>
 
         <p className="mt-10 text-xs text-neutral-500">
-          Luma approval and capacity rules still apply. This list helps organizers
-          prioritize invites; it does not replace Luma.
+          This list is the source of truth for door entry and credit-band
+          ranking. Subject to event capacity and organizer discretion.
         </p>
       </div>
     </div>
@@ -1145,5 +1447,19 @@ function ShowDiscordRow({
         />
       </button>
     </div>
+  );
+}
+
+export default function SportsHack2026SignupPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto w-full max-w-3xl px-4 py-10 text-sm text-neutral-500 md:px-6 md:py-14">
+          Loading…
+        </div>
+      }
+    >
+      <SportsHack2026SignupPageInner />
+    </Suspense>
   );
 }

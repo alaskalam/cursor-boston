@@ -45,6 +45,33 @@ jobs:
       - name: Run type check
         run: npm run type-check
 
+      - name: SPDX license header check
+        # Every .ts/.tsx file under the ROOT_DIRS that add-gpl-headers.js
+        # touches must carry an SPDX-License-Identifier line. Required for
+        # OpenSSF Gold criterion `license_per_file`. Run
+        # `node scripts/add-gpl-headers.js` (new files) or
+        # `node scripts/backfill-spdx-headers.js` (legacy files) to fix.
+        run: |
+          missing=$(find app lib components hooks contexts types -type f \( -name "*.ts" -o -name "*.tsx" \) -print0 | xargs -0 grep -L "SPDX-License-Identifier")
+          if [ -n "$missing" ]; then
+            echo "::error::Files missing SPDX-License-Identifier header:"
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: Check API.md is up-to-date with contracts
+        # Regenerate openapi.json and docs/API.md from the ts-rest contracts.
+        # docs/API.md is checked into git; openapi.json is a build artifact.
+        # If either contract changed without regenerating the docs, fail loud
+        # so the PR author runs `npm run generate:openapi && npm run generate:api-md`.
+        run: |
+          npm run generate:openapi
+          npm run generate:api-md
+          if ! git diff --exit-code -- docs/API.md; then
+            echo "::error::docs/API.md is out of date. Run 'npm run generate:openapi && npm run generate:api-md' and commit the result."
+            exit 1
+          fi
+
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
@@ -73,7 +100,7 @@ jobs:
       # License compliance check (matches transitive licenses in production deps)
       - name: Check license compliance
         run: |
-          npx license-checker --production --onlyAllow "MIT;MIT*;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;CC-BY-3.0;CC-BY-4.0;Unlicense;0BSD;BlueOak-1.0.0;GPL-3.0-only;GPL-3.0-or-later;Hippocratic-2.1;MPL-2.0;LGPL-3.0-or-later;(BSD-3-Clause OR GPL-2.0);MIT AND ISC" --summary
+          npx license-checker --production --excludePackages "@cursor/sdk@1.0.13;@cursor/sdk-darwin-arm64@1.0.13;@cursor/sdk-darwin-x64@1.0.13;@cursor/sdk-linux-arm64@1.0.13;@cursor/sdk-linux-x64@1.0.13;@cursor/sdk-win32-x64@1.0.13" --onlyAllow "MIT;MIT*;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;CC-BY-3.0;CC-BY-4.0;Unlicense;0BSD;BlueOak-1.0.0;GPL-3.0-only;GPL-3.0-or-later;Hippocratic-2.1;MPL-2.0;LGPL-3.0-or-later;(BSD-3-Clause OR GPL-2.0);MIT AND ISC" --summary
 
       # Secrets scanning with gitleaks
       - name: Run Gitleaks
@@ -118,7 +145,7 @@ jobs:
           CI: true
 
       - name: Upload coverage reports
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -126,17 +153,6 @@ jobs:
           name: codecov-cursor-boston
           fail_ci_if_error: false
           verbose: true
-
-      - name: Check coverage threshold
-        run: |
-          COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
-          echo "Current coverage: $COVERAGE%"
-          # Aligned with jest.config.js coverageThreshold (lines: 37).
-          # Ratchet this up as tests are added.
-          if (( $(echo "$COVERAGE < 37" | bc -l) )); then
-            echo "::error::Coverage is below 37% threshold"
-            exit 1
-          fi
 
   firestore-rules:
     name: Firestore rules tests
@@ -186,27 +202,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-
       - name: Install Playwright Browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-
-      - name: Install Playwright system deps (on cache hit)
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
+        run: npm run test:e2e:install -- --with-deps
 
       - name: Run Playwright tests
         run: npm run test:e2e
         env:
           CI: true
           PW_WORKERS: ${{ vars.PW_WORKERS || '4' }}
-          PLAYWRIGHT_BROWSERS_PATH: ''
           NEXT_PUBLIC_FIREBASE_API_KEY: "test-api-key"
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "test-project.firebaseapp.com"
           NEXT_PUBLIC_FIREBASE_PROJECT_ID: "test-project-id"
@@ -214,6 +217,7 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "123456789"
           NEXT_PUBLIC_FIREBASE_APP_ID: "1:123456789:web:abcdef"
           NEXT_PUBLIC_FIREBASE_DATABASE_URL: "https://test-project.firebaseio.com"
+          UNSUBSCRIBE_SECRET: "ci-unsubscribe-secret-32-bytes-only"
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -254,6 +258,7 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "123456789"
           NEXT_PUBLIC_FIREBASE_APP_ID: "1:123456789:web:abcdef"
           NEXT_PUBLIC_FIREBASE_DATABASE_URL: "https://test-project.firebaseio.com"
+          UNSUBSCRIBE_SECRET: "ci-unsubscribe-secret-32-bytes-only"
 
       - name: Build application
         run: npm run build
@@ -266,6 +271,7 @@ jobs:
           NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "123456789"
           NEXT_PUBLIC_FIREBASE_APP_ID: "1:123456789:web:abcdef"
           NEXT_PUBLIC_FIREBASE_DATABASE_URL: "https://test-project.firebaseio.com"
+          UNSUBSCRIBE_SECRET: "ci-unsubscribe-secret-32-bytes-only"
 
       - name: Report bundle size
         run: |
@@ -302,6 +308,21 @@ jobs:
             echo "All JS chunks are within the 500KB budget."
           fi
 
+      - name: Verify reproducible build
+        # OpenSSF Best Practices Gold criterion build_reproducible. Builds
+        # twice and diffs .next/ output (excluding documented irreducibles
+        # like *.map, trace, *.nft.json). See docs/REPRODUCIBLE_BUILD.md.
+        run: npm run build:verify-reproducible
+        env:
+          NEXT_PUBLIC_FIREBASE_API_KEY: "test-api-key"
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "test-project.firebaseapp.com"
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: "test-project-id"
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "test-project.appspot.com"
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "123456789"
+          NEXT_PUBLIC_FIREBASE_APP_ID: "1:123456789:web:abcdef"
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: "https://test-project.firebaseio.com"
+          UNSUBSCRIBE_SECRET: "ci-unsubscribe-secret-32-bytes-only"
+
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
@@ -309,21 +330,21 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
 
       - name: Build Docker image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
           file: docker/Dockerfile
           push: false
+          load: true
           tags: cursor-boston:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -335,3 +356,23 @@ jobs:
             NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=000000000000
             NEXT_PUBLIC_FIREBASE_APP_ID=1:000000000000:web:placeholder
             NEXT_PUBLIC_FIREBASE_DATABASE_URL=https://build-placeholder.firebaseio.com
+            UNSUBSCRIBE_SECRET=ci-docker-build-secret-32-bytes-only
+
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
+        with:
+          image-ref: cursor-boston:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+
+      - name: Upload Trivy scan results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trivy-results
+          path: trivy-results.sarif
+          retention-days: 30

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -10,6 +11,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { Search, Plus, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { QuestionCardsSkeleton } from "@/components/skeletons/QuestionsPageSkeleton";
 import type { Question, QuestionSort, VoteType } from "@/types/questions";
 import { QuestionCard } from "./QuestionCard";
 import { TagFilter } from "./TagFilter";
@@ -202,19 +204,53 @@ export function QuestionsListing() {
 
       {/* Question list */}
       {loading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 size={24} className="animate-spin text-neutral-400" />
-        </div>
+        <QuestionCardsSkeleton />
       ) : questions.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-neutral-500">No questions found</p>
-          {user && (
-            <Link
-              href="/questions/ask"
-              className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline mt-2 inline-block"
-            >
-              Be the first to ask a question
-            </Link>
+        <div className="text-center py-16 px-4 border border-neutral-200 dark:border-neutral-800 rounded-xl border-dashed">
+          {search || tag ? (
+            <>
+              <div className="w-12 h-12 bg-neutral-100 dark:bg-neutral-800/50 text-neutral-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Search size={24} />
+              </div>
+              <h3 className="text-lg font-medium text-foreground mb-1">No matches found</h3>
+              <p className="text-neutral-500 mb-6">
+                {`No results for '${[search, tag].filter(Boolean).join(" and ")}'.`}
+              </p>
+              <button
+                onClick={() => {
+                  setSearchInput("");
+                  setSearch("");
+                  setTag("");
+                }}
+                className="text-sm font-medium text-emerald-600 dark:text-emerald-400 hover:underline"
+              >
+                Clear filter?
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Plus size={24} />
+              </div>
+              <h3 className="text-lg font-medium text-foreground mb-1">No questions yet.</h3>
+              <p className="text-neutral-500 mb-6">Be the first to ask!</p>
+              {user ? (
+                <Link
+                  href="/questions/ask"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  <Plus size={16} />
+                  Ask a Question
+                </Link>
+              ) : (
+                <Link
+                  href="/login"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-neutral-900 dark:bg-white text-white dark:text-black hover:bg-neutral-800 dark:hover:bg-neutral-100 text-sm font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  Sign in to ask
+                </Link>
+              )}
+            </>
           )}
         </div>
       ) : (

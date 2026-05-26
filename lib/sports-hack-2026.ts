@@ -1,10 +1,14 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
  */
 
-export const SPORTS_HACK_2026_EVENT_ID = "sports-hack-2026";
+import { HACKATHON_EVENT_IDS } from "@/types/hackathon-events";
+
+export const SPORTS_HACK_2026_EVENT_ID =
+  HACKATHON_EVENT_IDS.SPORTS_HACK_2026;
 
 export const SPORTS_HACK_2026_NAME = "Boston Tech Week Sports Hack";
 export const SPORTS_HACK_2026_SHORT_NAME = "Sports Hack 2026";
@@ -13,7 +17,23 @@ export const SPORTS_HACK_2026_LUMA_SLUG = "t5vseeed";
 export const SPORTS_HACK_2026_LUMA_EMBED_ID = "evt-tTiu9jkwv4jVVxx";
 export const SPORTS_HACK_2026_LUMA_URL = `https://luma.com/${SPORTS_HACK_2026_LUMA_SLUG}`;
 
-export const SPORTS_HACK_2026_CAPACITY = 80;
+/**
+ * Confirmed-seat cap for the May 26 event. Bumped from 80 → 119 on 2026-05-22
+ * when an additional batch of Cursor credit codes brought the total to 119.
+ *
+ * This is the *credit-link* cap (only the top 119 confirmed attendees by
+ * leaderboard rank receive a Cursor credit link).
+ */
+export const SPORTS_HACK_2026_CAPACITY = 119;
+
+/**
+ * Guaranteed-entry cap distinct from the credit-link cap above. The first
+ * 200 confirmed-attending users (ranked by the existing leaderboard order —
+ * PR count + signedUpAt) are guaranteed entry on May 26; ranks 201+ are
+ * waitlisted (may still show up but not guaranteed). Of the guaranteed 200,
+ * the top SPORTS_HACK_2026_CAPACITY also receive a Cursor credit link.
+ */
+export const SPORTS_HACK_2026_ATTENDANCE_LIMIT = 200;
 export const SPORTS_HACK_2026_TIMEZONE = "America/New_York";
 export const SPORTS_HACK_2026_EVENT_DATE = "2026-05-26";
 export const SPORTS_HACK_2026_START_HOUR_ET = 10;
@@ -65,21 +85,21 @@ export interface SportsHack2026RankTier {
 }
 
 export function getSportsHack2026RankTier(rank: number): SportsHack2026RankTier {
-  if (rank <= 10) {
+  if (rank <= 15) {
     return {
       label: "🔥 On fire",
       detail: "You're at the top of the leaderboard — stay active and you're in.",
       tone: "hot",
     };
   }
-  if (rank <= 30) {
+  if (rank <= 45) {
     return {
       label: "💪 Looking great",
       detail: "Great position — a couple more PRs and you're locked in.",
       tone: "good",
     };
   }
-  if (rank <= 60) {
+  if (rank <= 90) {
     return {
       label: "👍 Solid — in the band",
       detail: "You're comfortably in the confirmed band. Keep the momentum.",
@@ -93,14 +113,14 @@ export function getSportsHack2026RankTier(rank: number): SportsHack2026RankTier 
       tone: "bubble",
     };
   }
-  if (rank <= 100) {
+  if (rank <= 150) {
     return {
       label: "🎯 One good week away",
       detail: `Just outside the top ${SPORTS_HACK_2026_CAPACITY}. One productive week of PRs and you're in.`,
       tone: "close",
     };
   }
-  if (rank <= 130) {
+  if (rank <= 190) {
     return {
       label: "🚀 Climb mode",
       detail: `Needs a meaningful PR push to break into the top ${SPORTS_HACK_2026_CAPACITY}.`,

@@ -1,6 +1,9 @@
 # Cloud Agent base image: Ubuntu (required for Cursor Computer Use with Dockerfiles).
 # Do not COPY the project — Cursor checks out the workspace separately.
-FROM ubuntu:24.04
+# Pinned by digest for supply-chain integrity (OpenSSF Scorecard
+# Pinned-Dependencies). Refresh the digest in lockstep with the human-
+# readable tag when bumping ubuntu versions.
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -14,9 +17,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 22.x (includes npm), matching package.json engines.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Done via a pinned APT repo + GPG-key import instead of the rolling
+# `setup_22.x | bash -` script — that pattern is flagged by Scorecard's
+# Pinned-Dependencies check because the script content can change
+# upstream at any time. The GPG-verified APT path locks the trust
+# anchor to NodeSource's signing key.
+RUN install -m 0755 -d /etc/apt/keyrings && \
+    curl --retry 3 --retry-delay 5 -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    chmod a+r /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 ########################################################
 # Docker (Cursor Cloud Agent — nested Docker)
@@ -63,7 +77,9 @@ RUN set -eux; \
 ########################################################
 # Firebase CLI (global)
 ########################################################
-RUN npm install -g firebase-tools
+# Pinned to match the devDependency in package.json (and the Scorecard
+# Pinned-Dependencies check). Bump in lockstep.
+RUN npm install -g firebase-tools@15.18.0
 
 ########################################################
 # ubuntu user (matches Cursor Cloud Agent Docker docs)

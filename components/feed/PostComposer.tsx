@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -6,10 +7,9 @@
 
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { User } from "firebase/auth";
-import { getInitials } from "@/lib/utils";
+import Avatar from "@/components/Avatar";
 
 interface PostComposerProps {
   user: User | null;
@@ -40,10 +40,10 @@ export function PostComposer({
   if (!user) {
     return (
       <div className="bg-white dark:bg-neutral-900 rounded-xl p-6 border border-neutral-200 dark:border-neutral-800 mb-6 text-center">
-        <p className="text-neutral-400 mb-4">Sign in to post messages</p>
+        <p className="text-neutral-600 dark:text-neutral-400 mb-4">Sign in to post messages</p>
         <Link
           href="/login?redirect=/members"
-          className="inline-block px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-400 transition-colors"
+          className="inline-block px-4 py-2 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors"
         >
           Sign In
         </Link>
@@ -55,19 +55,12 @@ export function PostComposer({
     <div className="bg-white dark:bg-neutral-900 rounded-xl p-4 border border-neutral-200 dark:border-neutral-800 mb-6">
       <div className="flex gap-3">
         <div className="shrink-0">
-          {user.photoURL ? (
-            <Image
-              src={user.photoURL}
-              alt={user.displayName || "You"}
-              width={40}
-              height={40}
-              className="w-10 h-10 rounded-full object-cover"
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-neutral-200 dark:bg-neutral-800 flex items-center justify-center text-neutral-700 dark:text-white font-semibold">
-              {getInitials(user.displayName || user.email)}
-            </div>
-          )}
+          <Avatar
+            src={user.photoURL}
+            name={user.displayName}
+            email={user.email}
+            size={40}
+          />
         </div>
         <div className="flex-1">
           <textarea
@@ -82,10 +75,10 @@ export function PostComposer({
           <div className="flex items-center justify-between pt-3 border-t border-neutral-200 dark:border-neutral-800">
             <span className={`text-xs ${
               trimmed.length < minLength
-                ? "text-red-400"
+                ? "text-red-700 dark:text-red-400"
                 : trimmed.length > maxLength
-                ? "text-red-400"
-                : "text-neutral-500"
+                ? "text-red-700 dark:text-red-400"
+                : "text-neutral-600 dark:text-neutral-400"
             }`}>
               {value.length}/{maxLength} (minimum {minLength})
             </span>
@@ -94,7 +87,7 @@ export function PostComposer({
               onClick={onSubmit}
               disabled={posting || !isValid}
               aria-label={posting ? "Posting message" : submitLabel}
-              className="px-5 py-2.5 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 min-h-[44px]"
+              className="px-5 py-2.5 bg-emerald-700 text-white rounded-lg text-sm font-medium hover:bg-emerald-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 min-h-[44px]"
             >
               {posting ? "Posting..." : submitLabel}
             </button>

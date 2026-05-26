@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -10,7 +11,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
+import Avatar from "@/components/Avatar";
 import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { PairSession, SessionNotes } from "@/lib/pair-programming/types";
@@ -28,7 +29,7 @@ export default function SessionDetailPage() {
   const sessionId = params.sessionId as string;
   const [session, setSession] = useState<PairSession | null>(null);
   const [otherUser, setOtherUser] = useState<PublicUser | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [notes, setNotes] = useState<SessionNotes>({
     whatWeWorkedOn: "",
     whatILearned: "",
@@ -39,10 +40,8 @@ export default function SessionDetailPage() {
 
   useEffect(() => {
     async function fetchSession() {
-      if (!user || !db || !sessionId) {
-        setLoading(false);
-        return;
-      }
+      if (!user || !db || !sessionId) return;
+      setLoading(true);
 
       try {
         const sessionDoc = await getDoc(doc(db, "pair_sessions", sessionId));
@@ -235,21 +234,11 @@ export default function SessionDetailPage() {
           {/* Partner Info */}
           {otherUser && (
             <div className="flex items-center gap-4 mb-6 p-4 bg-neutral-50 dark:bg-neutral-800 rounded-lg">
-              {otherUser.photoURL ? (
-                <Image
-                  src={otherUser.photoURL}
-                  alt={otherUser.displayName || "Partner"}
-                  width={64}
-                  height={64}
-                  className="w-16 h-16 rounded-full"
-                />
-              ) : (
-                <div className="w-16 h-16 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
-                  <span className="text-2xl text-neutral-500">
-                    {otherUser.displayName?.[0]?.toUpperCase() || "?"}
-                  </span>
-                </div>
-              )}
+              <Avatar
+                src={otherUser.photoURL}
+                name={otherUser.displayName}
+                size={64}
+              />
               <div>
                 <h3 className="font-semibold text-lg">
                   {otherUser.displayName || "Anonymous User"}

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -113,7 +114,14 @@ export function EditProfileModal({ user, onSave, onClose }: EditProfileModalProp
           <div className="flex items-center gap-4">
             <div className="shrink-0">
               {photoPreview ? (
-                <Image src={photoPreview} alt="Preview" width={80} height={80} className="rounded-full object-cover w-20 h-20" />
+                <Image
+                  src={photoPreview}
+                  alt="Preview"
+                  width={80}
+                  height={80}
+                  sizes="80px"
+                  className="rounded-full object-cover w-20 h-20"
+                />
               ) : (
                 <Avatar src={user.photoURL} name={user.displayName} email={user.email} size="lg" />
               )}

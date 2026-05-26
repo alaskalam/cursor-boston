@@ -66,21 +66,22 @@ describe('Rate Limiting', () => {
   });
 
   describe('getClientIdentifier', () => {
-    it('should extract IP from x-forwarded-for header', () => {
+    it('should extract the trusted client IP from x-forwarded-for', () => {
       const request = new Request('https://example.com', {
         headers: {
-          'x-forwarded-for': '192.168.1.1, 10.0.0.1',
+          'x-forwarded-for': '203.0.113.200, 198.51.100.10',
         },
       });
 
       const identifier = getClientIdentifier(request);
-      expect(identifier).toBe('192.168.1.1');
+      expect(identifier).toBe('198.51.100.10');
     });
 
-    it('should extract IP from x-real-ip header', () => {
+    it('should prefer x-vercel-forwarded-for over x-forwarded-for', () => {
       const request = new Request('https://example.com', {
         headers: {
-          'x-real-ip': '192.168.1.2',
+          'x-vercel-forwarded-for': '192.168.1.2',
+          'x-forwarded-for': '203.0.113.200, 10.0.0.1',
         },
       });
 
@@ -104,13 +105,28 @@ describe('Rate Limiting', () => {
       const identifier = getClientIdentifier(request);
       expect(identifier).toBe('unknown');
     });
+
+    it('should ignore x-real-ip because it is spoofable outside trusted proxies', () => {
+      const request = new Request('https://example.com', {
+        headers: {
+          'x-real-ip': '192.168.1.4',
+        },
+      });
+
+      const identifier = getClientIdentifier(request);
+      expect(identifier).toBe('unknown');
+    });
   });
 
   describe('rateLimitConfigs', () => {
     it('should have oauthCallback configuration', () => {
       expect(rateLimitConfigs.oauthCallback).toBeDefined();
       expect(rateLimitConfigs.oauthCallback.windowMs).toBe(15 * 60 * 1000);
-      expect(rateLimitConfigs.oauthCallback.maxRequests).toBe(10);
+      // Sized for shared-NAT venues. Raised to 1000 on 2026-05-24 after the
+      // previous 100 ceiling saturated at the May 26 event prep (218+
+      // confirmed attendees connecting Discord/GitHub from the same egress).
+      // See lib/rate-limit.ts oauthCallback comment for the full history.
+      expect(rateLimitConfigs.oauthCallback.maxRequests).toBe(1000);
     });
 
     it('should have webhook configuration', () => {
@@ -144,7 +160,7 @@ describe('Rate Limiting', () => {
       });
     });
 
-    it('should keep distinct showcase presets where the behavior differs', () => {
+    it('should keep distinct live showcase presets where the behavior differs', () => {
       expect(rateLimitConfigs.hackathonShowcaseAiScore).toEqual({
         windowMs: 60 * 1000,
         maxRequests: 30,
@@ -152,14 +168,6 @@ describe('Rate Limiting', () => {
       expect(rateLimitConfigs.hackathonShowcaseJudgeScore).toEqual({
         windowMs: 60 * 1000,
         maxRequests: 40,
-      });
-      expect(rateLimitConfigs.hackathonShowcaseUnlock).toEqual({
-        windowMs: 60 * 1000,
-        maxRequests: 20,
-      });
-      expect(rateLimitConfigs.hackathonShowcaseUnlockAttempts).toEqual({
-        windowMs: 5 * 60 * 1000,
-        maxRequests: 15,
       });
       expect(rateLimitConfigs.hackathonShowcaseVote).toEqual({
         windowMs: 60 * 1000,

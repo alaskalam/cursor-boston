@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase-admin";
-import { getVerifiedUser } from "@/lib/server-auth";
+import { getVerifiedUser, isCurrentIdTokenRevoked } from "@/lib/server-auth";
 import {
   HACK_A_SPRINT_2026_EVENT_ID,
   fetchShowcaseSubmissionsFromGitHub,
@@ -17,6 +18,7 @@ import { getHackASprint2026Phase } from "@/lib/hackathon-asprint-2026-schedule";
 import { hackASprint2026ScoreDocId } from "@/lib/hackathon-asprint-2026-state";
 import { getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,19 +58,28 @@ export async function POST(request: NextRequest) {
     if (!okJudge) {
       return NextResponse.json({ error: "Not a judge" }, { status: 403 });
     }
+    if (await isCurrentIdTokenRevoked(request)) {
+      return NextResponse.json(
+        { error: "Session revoked. Please sign in again." },
+        { status: 401 }
+      );
+    }
 
-    let body: { submissionId?: string; score?: number };
+    let body: unknown;
     try {
-      body = (await request.json()) as { submissionId?: string; score?: number };
+      body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-    const submissionId = String(
-      body.submissionId ?? ""
-    )
-      .trim()
-      .toLowerCase();
-    const score = Number(body.score);
+    const parsed = hackathonsContract.hackASprintJudgeScore.body.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
+    const submissionId = parsed.data.submissionId.trim().toLowerCase();
+    const score = parsed.data.score;
 
     if (!submissionId || !Number.isInteger(score) || score < 1 || score > 10) {
       return NextResponse.json(

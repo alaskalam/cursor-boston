@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -14,6 +15,7 @@ import { useGithubConnection } from "../_hooks/useGithubConnection";
 import { useGoogleConnection } from "../_hooks/useGoogleConnection";
 import { useMfaEnrollment } from "../_hooks/useMfaEnrollment";
 import { useEmailManagement } from "../_hooks/useEmailManagement";
+import { DataPrivacySection } from "./DataPrivacySection";
 import type { ConnectedAgent } from "../_types";
 
 interface AdditionalEmail {
@@ -255,7 +257,14 @@ export function SecurityTab({
                   <div key={agent.id} className="flex items-center gap-3 p-3 bg-neutral-800/50 rounded-lg">
                     <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center shrink-0">
                       {agent.avatarUrl ? (
-                        <Image src={agent.avatarUrl} alt={agent.name} width={32} height={32} className="rounded-full" />
+                        <Image
+                          src={agent.avatarUrl}
+                          alt={agent.name}
+                          width={32}
+                          height={32}
+                          sizes="32px"
+                          className="rounded-full"
+                        />
                       ) : (
                         <AgentIcon className="text-purple-400 w-4 h-4" />
                       )}
@@ -352,6 +361,8 @@ function MfaSection({ mfa }: MfaSectionProps) {
         {mfa.success && <p className="text-emerald-400 text-sm">{mfa.success}</p>}
         <div id="mfa-recaptcha-container" />
       </div>
+
+      <DataPrivacySection />
     </div>
   );
 }

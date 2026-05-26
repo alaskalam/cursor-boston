@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -253,11 +254,11 @@ export function WinnerCommitmentsCard() {
           </h3>
           <p className="mt-1">
             You can participate fully without putting yourself up for the
-            vote. There are 60+ people in Cohort 1 — we&apos;re not going to
-            run short of volunteers. Everything else (building, voting, the
-            in-person events, the demo day with hiring partners) is still
-            yours. The only thing to skip is the &quot;submit to win&quot;
-            step.
+            vote. There are dozens of people in the cohort — we&apos;re not
+            going to run short of volunteers. Everything else (building,
+            voting, the in-person events, the demo day with hiring partners)
+            is still yours. The only thing to skip is the &quot;submit to
+            win&quot; step.
           </p>
         </div>
       </div>

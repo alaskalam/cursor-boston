@@ -1,4 +1,6 @@
+/* eslint-disable jsx-a11y/label-has-associated-control -- legacy form markup; tracked separately */
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -16,12 +18,13 @@ import type {
   SessionType,
   AvailabilityWindow,
 } from "@/lib/pair-programming/types";
-import Image from "next/image";
+import Avatar from "@/components/Avatar";
 import { getPairProfile, getAllActiveProfiles } from "@/lib/pair-programming/data";
 import { getTopMatches } from "@/lib/pair-programming/matching";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { NeedsWorkBanner } from "@/components/NeedsWorkBanner";
+import { SectionHelp } from "@/components/SectionHelp";
 
 interface PublicUser {
   uid: string;
@@ -34,7 +37,7 @@ export default function PairProgrammingPage() {
   const [profile, setProfile] = useState<PairProfile | null>(null);
   const [matches, setMatches] = useState<MatchScore[]>([]);
   const [requests, setRequests] = useState<PairRequest[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [showProfileForm, setShowProfileForm] = useState(false);
   const [userProfiles, setUserProfiles] = useState<Record<string, PublicUser>>({});
   const [refreshKey, setRefreshKey] = useState(0);
@@ -42,10 +45,8 @@ export default function PairProgrammingPage() {
   // Fetch user's pair profile
   useEffect(() => {
     async function fetchProfile() {
-      if (!user || !db) {
-        setLoading(false);
-        return;
-      }
+      if (!user || !db) return;
+      setLoading(true);
 
       try {
         const userProfile = await getPairProfile(user.uid);
@@ -230,6 +231,36 @@ export default function PairProgrammingPage() {
           </button>
         </div>
 
+        <SectionHelp
+          title="How matching works"
+          intro={
+            <>
+              Tell the matchmaker your skills, what you want to learn, and
+              your timezone / availability. You&apos;ll see other developers
+              whose profiles complement yours. Send a request; if they
+              accept, you get a session you can plan together.
+            </>
+          }
+          faq={[
+            {
+              q: "How long should I expect to wait for a response?",
+              a: "Most accepts/declines happen within 1–2 days. If you haven't heard back in a week, the request will time out and you can re-aim it at someone else.",
+            },
+            {
+              q: "What makes a good request?",
+              a: "Be specific. \"Want to pair on a Next.js auth flow this Saturday afternoon EST\" gets way more accepts than \"hey want to code sometime\". Mention what you'll bring (a codebase to work in, a problem to solve, a learning goal).",
+            },
+            {
+              q: "Can I be both mentor-ish and learner-ish?",
+              a: "Yes. The same person can have skills they're teaching AND skills they're learning. The matcher uses both axes — you'll show up in searches both ways.",
+            },
+          ]}
+          links={[
+            { label: "View your requests", href: "/pair/requests" },
+            { label: "Mentorship (longer commitment)", href: "/mentorship" },
+          ]}
+        />
+
         {/* Pending Requests */}
         {requests.length > 0 && (
           <div className="mb-8 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -297,21 +328,11 @@ function MatchCard({
     <div className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 p-6">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
-          {userProfile?.photoURL ? (
-            <Image
-              src={userProfile.photoURL}
-              alt={userProfile.displayName || "User"}
-              width={48}
-              height={48}
-              className="w-12 h-12 rounded-full"
-            />
-          ) : (
-            <div className="w-12 h-12 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center">
-              <span className="text-neutral-500">
-                {userProfile?.displayName?.[0]?.toUpperCase() || "?"}
-              </span>
-            </div>
-          )}
+          <Avatar
+            src={userProfile?.photoURL}
+            name={userProfile?.displayName}
+            size={48}
+          />
           <div>
             <h3 className="font-semibold">
               {userProfile?.displayName || "Anonymous User"}

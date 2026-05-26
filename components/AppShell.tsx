@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -21,6 +22,8 @@ import {
   Award,
   BarChart2,
   BookOpen,
+  Bot,
+  BrainCircuit,
   Briefcase,
   Building2,
   Calendar,
@@ -28,9 +31,13 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Code2,
+  FlaskConical,
+  GraduationCap,
   HelpCircle,
   Info,
   LayoutGrid,
+  LibraryBig,
   LogIn,
   Menu,
   MessageSquare,
@@ -39,12 +46,14 @@ import {
   UserPlus,
   Users,
   UsersRound,
+  Video,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import Avatar from "@/components/Avatar";
 import Footer from "@/components/Footer";
+import { SportsHackConfirmAttendanceModal } from "@/components/hackathons/SportsHackConfirmAttendanceModal";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { SUMMER_COHORT_OPEN_EVENT } from "@/lib/summer-cohort";
 
@@ -52,7 +61,8 @@ const STORAGE_KEY = "cursor-boston-sidebar-collapsed";
 
 interface NavItem {
   href: string;
-  label: string;
+  label: ReactNode;
+  title?: string;
   icon: LucideIcon;
   highlight?: boolean;
 }
@@ -79,9 +89,46 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/events", label: "Events", icon: Calendar },
       { href: "/cookbook", label: "Cookbook", icon: ChefHat },
+      { href: "/templates", label: "Templates", icon: LibraryBig },
       { href: "/questions", label: "Q&A", icon: HelpCircle },
+      { href: "/pr-ideas", label: "PR Studio", icon: Bot },
       { href: "/opportunities", label: "Opportunities", icon: Briefcase },
       { href: "/ecosystem", label: "Ecosystem", icon: Building2 },
+      {
+        href: "/research",
+        title: "Research",
+        label: (
+          <span className="inline-flex items-center gap-1">
+            Research
+            <span className="relative ml-1 flex h-4 w-4 items-center justify-center">
+              <span
+                className="absolute inline-block h-4 w-4 animate-spin rounded-full bg-gradient-to-tr from-yellow-400 via-orange-300 to-pink-500 opacity-70"
+                style={{
+                  animationDuration: "2.4s",
+                  filter: "blur(1.5px)",
+                }}
+              ></span>
+              <svg
+                className="relative z-10"
+                width="16"
+                height="16"
+                fill="none"
+                viewBox="0 0 16 16"
+              >
+                <g filter="drop-shadow(0px 0px 3px rgba(255,199,44,0.3))">
+                  <path
+                    d="M8 2.5l1.24 2.89 3.11.27-2.45 2.17.73 3.03L8 9.39l-2.63 1.47.73-3.03-2.45-2.17 3.11-.27L8 2.5z"
+                    fill="#FECF2F"
+                    stroke="#FFB300"
+                    strokeWidth="0.5"
+                  />
+                </g>
+              </svg>
+            </span>
+          </span>
+        ),
+        icon: FlaskConical,
+      },
       { href: "/blog", label: "Blog", icon: BookOpen },
       { href: "/certificate", label: "Certificate", icon: Award },
     ],
@@ -90,9 +137,13 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Needs Work",
     items: [
       { href: "/hackathons", label: "Hackathons", icon: Trophy },
+      { href: "/challenges", label: "Challenges", icon: Code2 },
       { href: "/showcase", label: "Showcase", icon: LayoutGrid },
       { href: "/members", label: "Members", icon: Users },
       { href: "/pair", label: "Pair Programming", icon: UsersRound },
+      { href: "/recordings", label: "Recordings", icon: Video },
+      { href: "/mentorship", label: "Mentorship", icon: GraduationCap },
+      { href: "/skills", label: "Skills Passport", icon: BrainCircuit },
       { href: "/talks", label: "Talks", icon: MessageSquare },
       { href: "/analytics", label: "Analytics", icon: BarChart2 },
     ],
@@ -339,7 +390,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       <li key={item.href}>
                         <Link
                           href={item.href}
-                          title={item.label}
+                          title={item.title ?? (typeof item.label === "string" ? item.label : undefined)}
                           onClick={() => {
                             setMobileOpen(false);
                             if (item.highlight) {
@@ -371,7 +422,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               expandedWidth ? "justify-between" : "flex-col justify-center gap-2",
             ].join(" ")}
           >
-            <ThemeToggle />
+            {pathname !== "/pr-ideas" ? <ThemeToggle /> : null}
             <button
               type="button"
               onClick={toggleCollapsed}
@@ -476,6 +527,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </main>
         <Footer />
       </div>
+      <SportsHackConfirmAttendanceModal />
+      <WorldMapFab />
     </div>
+  );
+}
+
+// Floating "Open game world map" launcher. Lives at z-40, so the
+// /game/world page's own fixed inset-0 z-50 overlay covers it — no
+// path check needed.
+function WorldMapFab() {
+  return (
+    <Link
+      href="/game/world"
+      className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-full bg-neutral-900/80 backdrop-blur border border-neutral-700/60 px-4 py-2.5 text-sm font-medium text-neutral-100 shadow-lg hover:bg-neutral-800 transition-colors"
+      aria-label="Open game world map"
+    >
+      <span aria-hidden>🗺️</span>
+      <span>Open game world map</span>
+    </Link>
   );
 }

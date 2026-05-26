@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -11,6 +12,8 @@ import { logger } from "@/lib/logger";
 import { getVerifiedUser } from "@/lib/server-auth";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { deleteLudwittTokens } from "@/lib/ludwitt-tokens";
+
+// @contracts: ludwittContract.disconnect (lib/api-schemas/ludwitt.ts)
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

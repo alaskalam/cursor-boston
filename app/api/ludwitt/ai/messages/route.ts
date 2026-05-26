@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -17,6 +18,7 @@ import {
   deleteLudwittTokens,
   withFreshLudwittAccessToken,
 } from "@/lib/ludwitt-tokens";
+import { ludwittContract } from "@/lib/api-schemas/ludwitt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +62,11 @@ async function handleAiMessages(request: NextRequest): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
-  const validated = validateBody(body);
+  const parsed = ludwittContract.aiMessages.body.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+  }
+  const validated = validateBody(parsed.data);
   if (!validated) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }

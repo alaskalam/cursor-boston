@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,9 +8,9 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
+import Avatar from "@/components/Avatar";
 import type { Message, ReactionType } from "@/types/feed";
-import { getInitials, formatRelativeDate } from "@/lib/utils";
+import { formatRelativeDate } from "@/lib/utils";
 
 interface ReplyCardProps {
   reply: Message;
@@ -35,23 +36,16 @@ export function ReplyCard({
   return (
     <div className="bg-neutral-100 dark:bg-neutral-800/50 rounded-lg p-3">
       <div className="flex items-start gap-2">
-        {reply.authorPhoto ? (
-          <Image
-            src={reply.authorPhoto}
-            alt={reply.authorName}
-            width={28}
-            height={28}
-            className="rounded-full object-cover shrink-0"
-          />
-        ) : (
-          <div className="w-7 h-7 rounded-full bg-neutral-200 dark:bg-neutral-700 flex items-center justify-center text-neutral-700 dark:text-white text-xs font-semibold shrink-0">
-            {getInitials(reply.authorName)}
-          </div>
-        )}
+        <Avatar
+          src={reply.authorPhoto}
+          name={reply.authorName}
+          size={28}
+          className="shrink-0"
+        />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-medium text-neutral-900 dark:text-white text-sm">{reply.authorName}</span>
-            <span className="text-neutral-500 text-xs">{formatRelativeDate(reply.createdAt)}</span>
+            <span className="text-neutral-600 dark:text-neutral-400 text-xs">{formatRelativeDate(reply.createdAt)}</span>
             {isOwner && (
               <>
                 {showDeleteConfirm ? (
@@ -59,14 +53,14 @@ export function ReplyCard({
                     <button
                       type="button"
                       onClick={() => { onDelete(); setShowDeleteConfirm(false); }}
-                      className="text-xs text-red-400 hover:text-red-300 px-2 py-1"
+                      className="text-xs text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 px-2 py-1"
                     >
                       Delete
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowDeleteConfirm(false)}
-                      className="text-xs text-neutral-400 hover:text-white px-2 py-1"
+                      className="text-xs text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white px-2 py-1"
                     >
                       Cancel
                     </button>
@@ -74,7 +68,7 @@ export function ReplyCard({
                 ) : (
                   <button
                     onClick={() => setShowDeleteConfirm(true)}
-                    className="ml-auto text-neutral-500 hover:text-neutral-300 p-1"
+                    className="ml-auto text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-300 p-1"
                     aria-label="Delete reply"
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
@@ -94,11 +88,15 @@ export function ReplyCard({
             <button
               onClick={onLike}
               disabled={!isLoggedIn}
-              aria-label={userReaction === "like" ? "Remove like" : "Like"}
+              aria-label={
+                userReaction === "like"
+                  ? `Remove like from ${reply.authorName}'s reply`
+                  : `Like ${reply.authorName}'s reply`
+              }
               className={`flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs ${
                 userReaction === "like"
-                  ? "text-emerald-400"
-                  : "text-neutral-500 hover:text-emerald-400"
+                  ? "text-emerald-700 dark:text-emerald-400"
+                  : "text-neutral-600 dark:text-neutral-400 hover:text-emerald-700 dark:hover:text-emerald-400"
               } ${!isLoggedIn ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <svg
@@ -117,11 +115,15 @@ export function ReplyCard({
             <button
               onClick={onDislike}
               disabled={!isLoggedIn}
-              aria-label={userReaction === "dislike" ? "Remove dislike" : "Dislike"}
+              aria-label={
+                userReaction === "dislike"
+                  ? `Remove dislike from ${reply.authorName}'s reply`
+                  : `Dislike ${reply.authorName}'s reply`
+              }
               className={`flex items-center gap-1 px-2 py-1 rounded transition-colors text-xs ${
                 userReaction === "dislike"
-                  ? "text-red-400"
-                  : "text-neutral-500 hover:text-red-400"
+                  ? "text-red-700 dark:text-red-400"
+                  : "text-neutral-600 dark:text-neutral-400 hover:text-red-700 dark:hover:text-red-400"
               } ${!isLoggedIn ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <svg

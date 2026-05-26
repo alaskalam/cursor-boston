@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -15,10 +16,7 @@ import {
   getLumaCheckoutEventId,
   getLumaCheckoutHref,
 } from "@/lib/luma-event";
-import {
-  PYDATA_2026_EVENT_SLUG,
-  PYDATA_2026_REGISTRATION_PATH,
-} from "@/lib/pydata-2026";
+import { PYDATA_2026_EVENT_SLUG } from "@/lib/pydata-2026";
 
 // Type definitions for event data
 interface AgendaItem {
@@ -137,12 +135,18 @@ function getEventBySlug(slug: string): Event | undefined {
   return getAllEvents().find((event) => event.slug === slug);
 }
 
-// Generate static paths for all events
+// Generate static paths for all events.
+// The pydata-2026 slug is intentionally excluded: it has its own static
+// route at app/events/cursor-boston-pydata-2026/page.tsx that gates access
+// and renders a different layout. Leaving the dynamic [slug] route would
+// also build a page for that slug, but the static one wins at request time.
 export async function generateStaticParams() {
   const events = getAllEvents();
-  return events.map((event) => ({
-    slug: event.slug,
-  }));
+  return events
+    .filter((event) => event.slug !== PYDATA_2026_EVENT_SLUG)
+    .map((event) => ({
+      slug: event.slug,
+    }));
 }
 
 // Generate metadata for SEO
@@ -201,7 +205,6 @@ export default async function EventPage({
   }
 
   const websiteRegistration = WEBSITE_REGISTRATION_CONFIG[event.slug];
-  const isPyData = event.slug === PYDATA_2026_EVENT_SLUG;
 
   // Generate JSON-LD structured data
   const eventJsonLd = {
@@ -269,6 +272,7 @@ export default async function EventPage({
               fill
               className="object-contain"
               priority
+              sizes="(max-width: 1023px) 100vw, 50vw"
             />
             {/* QR Code */}
             <div className="absolute bottom-4 right-4 w-24 h-24 bg-white p-1 rounded-lg shadow-lg">
@@ -277,6 +281,7 @@ export default async function EventPage({
                 alt="Scan to register"
                 fill
                 className="object-contain"
+                sizes="96px"
               />
             </div>
           </div>
@@ -403,30 +408,6 @@ export default async function EventPage({
                 </div>
                 <p className="text-sm text-amber-600 dark:text-amber-400 mt-1 font-medium">
                   You must register on <strong>both</strong>: Luma (for door entry) <strong>and</strong> the website (for hackathon ranking &amp; prizes). One without the other won&apos;t get you in.
-                </p>
-              </div>
-            ) : isPyData ? (
-              <div className="flex flex-col gap-4">
-                <Link
-                  href={PYDATA_2026_REGISTRATION_PATH}
-                  className="inline-flex items-center justify-center gap-2 px-8 py-4 bg-emerald-500 text-white rounded-lg text-base font-semibold hover:bg-emerald-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 focus-visible:ring-offset-black w-full sm:w-auto"
-                >
-                  Register for badge
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
-                </Link>
-                <a
-                  href={getLumaCheckoutHref(event)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 px-6 py-3 border border-white/20 text-white/80 rounded-lg text-sm font-medium hover:bg-white/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black w-full sm:w-auto luma-checkout--button"
-                  data-luma-action="checkout"
-                  data-luma-event-id={getLumaCheckoutEventId(event)}
-                >
-                  RSVP on Luma (for door entry)
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 17l9.2-9.2M17 17V7H7" /></svg>
-                </a>
-                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1 font-medium">
-                  Both required: register here so we can hand your name to Moderna for badge issuance, then RSVP on Luma to receive the Envoy NDA email.
                 </p>
               </div>
             ) : (
@@ -641,6 +622,7 @@ export default async function EventPage({
                         alt={speaker.name}
                         fill
                         className="object-cover"
+                        sizes="96px"
                       />
                     </div>
                   )}
@@ -795,6 +777,7 @@ export default async function EventPage({
                     alt={sponsor.name}
                     width={120}
                     height={60}
+                    sizes="120px"
                     className="object-contain opacity-80 hover:opacity-100 transition-opacity"
                   />
                 </a>

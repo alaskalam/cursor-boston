@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -8,6 +9,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getVerifiedUser } from "@/lib/server-auth";
 import { getAgentsByOwner } from "@/lib/agents";
 import { checkRateLimit, getClientIdentifier } from "@/lib/rate-limit";
+
+// @contracts: agentsContract.user (lib/api-schemas/agents.ts)
 
 // Rate limit config for user agent listing
 const USER_AGENTS_RATE_LIMIT = {

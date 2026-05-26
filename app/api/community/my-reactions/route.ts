@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -9,13 +10,16 @@ import { getVerifiedUser } from "@/lib/server-auth";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { getClientIdentifier, checkRateLimit } from "@/lib/rate-limit";
 import type { ReactionType } from "@/types/feed";
+import { communityContract } from "@/lib/api-schemas/community";
+import {
+  COMMUNITY_MY_REACTIONS_MAX_MESSAGE_IDS,
+  COMMUNITY_MY_REACTIONS_RATE_LIMIT,
+  COMMUNITY_RATE_LIMIT_RETRY_AFTER_SECONDS,
+  COMMUNITY_REACTIONS_QUERY_CHUNK_SIZE,
+} from "@/lib/constants/community";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 120 };
-const MAX_IDS = 60;
-const IN_CHUNK = 10;
 
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -28,11 +32,21 @@ function chunk<T>(arr: T[], size: number): T[][] {
 export async function GET(request: NextRequest) {
   try {
     const clientId = getClientIdentifier(request as unknown as Request);
-    const rateResult = checkRateLimit(`community-my-reactions:${clientId}`, RATE_LIMIT);
+    const rateResult = checkRateLimit(
+      `community-my-reactions:${clientId}`,
+      COMMUNITY_MY_REACTIONS_RATE_LIMIT
+    );
     if (!rateResult.success) {
       return NextResponse.json(
         { error: "Too many requests", retryAfterSeconds: rateResult.retryAfter },
-        { status: 429, headers: { "Retry-After": String(rateResult.retryAfter || 60) } }
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              rateResult.retryAfter || COMMUNITY_RATE_LIMIT_RETRY_AFTER_SECONDS
+            ),
+          },
+        }
       );
     }
 
@@ -41,15 +55,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const raw = request.nextUrl.searchParams.get("messageIds") || "";
+    const queryParsed = communityContract.myReactions.query.safeParse({
+      messageIds: request.nextUrl.searchParams.get("messageIds") ?? "",
+    });
+    if (!queryParsed.success) {
+      return NextResponse.json(
+        { error: queryParsed.error.issues[0]?.message ?? "Invalid query" },
+        { status: 400 }
+      );
+    }
     const messageIds = [
       ...new Set(
-        raw
+        queryParsed.data.messageIds
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean)
       ),
-    ].slice(0, MAX_IDS);
+    ].slice(0, COMMUNITY_MY_REACTIONS_MAX_MESSAGE_IDS);
 
     if (messageIds.length === 0) {
       return NextResponse.json({ reactions: {} as Record<string, ReactionType> });
@@ -62,7 +84,7 @@ export async function GET(request: NextRequest) {
 
     const reactions: Record<string, ReactionType> = {};
 
-    for (const ids of chunk(messageIds, IN_CHUNK)) {
+    for (const ids of chunk(messageIds, COMMUNITY_REACTIONS_QUERY_CHUNK_SIZE)) {
       const snap = await db
         .collection("messageReactions")
         .where("userId", "==", user.uid)

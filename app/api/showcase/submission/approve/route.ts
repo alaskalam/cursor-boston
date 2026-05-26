@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -7,11 +8,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { getAdminDb } from "@/lib/firebase-admin";
-import { getVerifiedUser } from "@/lib/server-auth";
+import { getVerifiedUser, isCurrentIdTokenRevoked } from "@/lib/server-auth";
 import { getClientIdentifier } from "@/lib/rate-limit";
 import { buildRateLimitHeaders, checkServerRateLimit } from "@/lib/rate-limit-server";
 import { sanitizeDocId } from "@/lib/sanitize";
 import { logger } from "@/lib/logger";
+import { showcaseContract } from "@/lib/api-schemas/showcase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,6 +152,12 @@ export async function GET(request: NextRequest) {
     if (!user.isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    if (await isCurrentIdTokenRevoked(request)) {
+      return NextResponse.json(
+        { error: "Session revoked. Please sign in again." },
+        { status: 401 }
+      );
+    }
 
     const db = getAdminDb();
     if (!db) {
@@ -226,25 +234,31 @@ export async function POST(request: NextRequest) {
     if (!user.isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    if (await isCurrentIdTokenRevoked(request)) {
+      return NextResponse.json(
+        { error: "Session revoked. Please sign in again." },
+        { status: 401 }
+      );
+    }
 
     const db = getAdminDb();
     if (!db) {
       return NextResponse.json({ error: "Server not configured" }, { status: 500 });
     }
 
-    let body: Record<string, unknown>;
-    try {
-      body = (await request.json()) as Record<string, unknown>;
-    } catch {
+    const rawBody = await request.json().catch(() => null);
+    if (rawBody === null) {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-    const submissionId = sanitizeDocId(
-      typeof body.submissionId === "string" ? body.submissionId : ""
-    );
-    const action = body.action === "reject" ? "reject" : "approve";
+    const parsed = showcaseContract.submissionApprove.body.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid submissionId" }, { status: 400 });
+    }
+    const submissionId = sanitizeDocId(parsed.data.submissionId);
+    const action = parsed.data.action === "reject" ? "reject" : "approve";
     const reason =
-      typeof body.reason === "string" && body.reason.trim()
-        ? body.reason.trim()
+      typeof parsed.data.reason === "string" && parsed.data.reason.trim()
+        ? parsed.data.reason.trim()
         : undefined;
     if (!submissionId) {
       return NextResponse.json({ error: "Invalid submissionId" }, { status: 400 });

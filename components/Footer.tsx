@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -114,6 +115,11 @@ export default function Footer() {
                   <li>
                     <Link href="/partners" className="text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white text-sm transition-colors focus-visible:outline-none focus-visible:text-foreground focus-visible:underline">
                       Partners
+                    </Link>
+                  </li>
+                  <li>
+                    <Link href="/game" className="text-neutral-600 dark:text-neutral-400 hover:text-black dark:hover:text-white text-sm transition-colors focus-visible:outline-none focus-visible:text-foreground focus-visible:underline">
+                      Generals
                     </Link>
                   </li>
                 </ul>
@@ -265,6 +271,7 @@ export default function Footer() {
                     alt="Gauntlet"
                     width={32}
                     height={32}
+                    sizes="32px"
                     className="object-contain"
                   />
                 </div>

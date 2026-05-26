@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -14,20 +15,34 @@ import { getClientIdentifier } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
 import { sanitizeText } from "@/lib/sanitize";
 import { getDisplayName } from "@/lib/utils";
+import { communityContract } from "@/lib/api-schemas/community";
+import {
+  COMMUNITY_POST_RATE_LIMIT,
+  COMMUNITY_RATE_LIMIT_RETRY_AFTER_SECONDS,
+} from "@/lib/constants/community";
+import { extractCommunityMentions } from "@/lib/community-mentions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const COMMUNITY_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 10 };
-
 export async function POST(request: NextRequest) {
   try {
     const clientId = getClientIdentifier(request as unknown as Request);
-    const rateResult = await checkUpstashRateLimit(`community-post:${clientId}`, COMMUNITY_RATE_LIMIT);
+    const rateResult = await checkUpstashRateLimit(
+      `community-post:${clientId}`,
+      COMMUNITY_POST_RATE_LIMIT
+    );
     if (!rateResult.success) {
       return NextResponse.json(
         { error: "Too many requests", retryAfterSeconds: rateResult.retryAfter },
-        { status: 429, headers: { "Retry-After": String(rateResult.retryAfter || 60) } }
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(
+              rateResult.retryAfter || COMMUNITY_RATE_LIMIT_RETRY_AFTER_SECONDS
+            ),
+          },
+        }
       );
     }
 
@@ -44,21 +59,30 @@ export async function POST(request: NextRequest) {
 
     const bodyOrError = await parseRequestBody(request);
     if (bodyOrError instanceof NextResponse) return bodyOrError;
-    const { content } = bodyOrError;
 
-    const sanitizedContent = sanitizeText(typeof content === "string" ? content : "");
-    if (sanitizedContent.length < 100 || sanitizedContent.length > 500) {
+    // Validate via the contract schema so the API surface and the runtime
+    // check stay in lockstep with the OpenAPI spec.
+    const sanitizedRaw = sanitizeText(
+      typeof bodyOrError.content === "string" ? bodyOrError.content : ""
+    );
+    const parsed = communityContract.createPost.body.safeParse({
+      content: sanitizedRaw,
+    });
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Content must be between 100 and 500 characters" },
+        { error: parsed.error.issues[0]?.message ?? "Invalid request body" },
         { status: 400 }
       );
     }
+    const sanitizedContent = parsed.data.content;
+    const mentions = extractCommunityMentions(sanitizedContent);
 
     const authorName = getDisplayName(user);
 
     const messageRef = db.collection("communityMessages").doc();
     await messageRef.set({
       content: sanitizedContent,
+      mentions,
       authorId: user.uid,
       authorName,
       authorPhoto: user.picture || null,

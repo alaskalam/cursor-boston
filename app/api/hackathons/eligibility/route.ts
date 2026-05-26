@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -9,6 +10,7 @@ import { getAdminDb } from "@/lib/firebase-admin";
 import { getVerifiedUser } from "@/lib/server-auth";
 import { getCurrentVirtualHackathonId } from "@/lib/hackathons";
 import { checkRateLimit, getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,7 +48,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const hackathonId = request.nextUrl.searchParams.get("hackathonId") ?? getCurrentVirtualHackathonId();
+    const queryParse = hackathonsContract.eligibility.query.safeParse({
+      hackathonId: request.nextUrl.searchParams.get("hackathonId") ?? undefined,
+    });
+    if (!queryParse.success) {
+      return NextResponse.json({ error: "Invalid query" }, { status: 400 });
+    }
+    const hackathonId = queryParse.data.hackathonId ?? getCurrentVirtualHackathonId();
 
     const userRef = db.collection("users").doc(user.uid);
     const userSnap = await userRef.get();

@@ -1,10 +1,13 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
  */
 
 "use client";
+
+/* eslint-disable react-hooks/preserve-manual-memoization, react-hooks/set-state-in-effect, react-hooks/static-components -- Existing Hack-a-Sprint page structure predates the React compiler rules; this PR only updates public showcase copy/links. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -97,6 +100,9 @@ const PHASE_LABEL: Record<HackASprint2026Phase, string> = {
   peerVotingOpen: "Peer voting & judging",
   resultsOpen: "Final results",
 };
+
+const HACK_A_SPRINT_SUBMISSION_BRANCH_URL =
+  "https://github.com/rogerSuperBuilderAlpha/cursor-boston/tree/hack-a-sprint-2026-submissions";
 
 export default function HackASprint2026ShowcasePage() {
   const { user, loading: authLoading } = useAuth();
@@ -720,8 +726,18 @@ export default function HackASprint2026ShowcasePage() {
             </p>
           )}
           <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-4 max-w-2xl">
-            Public gallery of merged projects. If you submitted via GitHub (same
-            account linked on your{" "}
+            Public gallery of merged projects. The event is over, but the
+            exercise stays open: build an agent anytime and open a PR to the{" "}
+            <a
+              href={HACK_A_SPRINT_SUBMISSION_BRANCH_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-emerald-600 hover:underline dark:text-emerald-400"
+            >
+              hack-a-sprint-2026-submissions
+            </a>{" "}
+            branch to be listed here. If you submitted via GitHub (same account
+            linked on your{" "}
             <Link href="/profile" className="text-emerald-600 dark:text-emerald-400 hover:underline font-medium">
               profile
             </Link>

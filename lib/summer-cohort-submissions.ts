@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -6,9 +7,12 @@
 
 import { getAdminDb } from "./firebase-admin";
 import { getGithubRepoPair } from "./github-recent-merged-prs";
+import { fetchWithTimeout } from "./http-fetch";
 import { logger } from "./logger";
 import {
   SUMMER_COHORT_C1_VOTE_WEEKS,
+  SUMMER_COHORT_C2_VOTE_WEEKS,
+  type SummerCohortId,
   type SummerCohortVoteWeek,
 } from "./summer-cohort";
 
@@ -27,6 +31,8 @@ export interface SummerCohortSubmissionsSummary {
   path: string;
   merged: number;
   tryingToWin: number;
+  /** GitHub list/file fetch failures skipped while building this feed. */
+  githubFetchErrorCount: number;
   /** Sorted by githubHandle for stable ordering. */
   submissions: ReadonlyArray<{
     githubHandle: string;
@@ -42,6 +48,8 @@ export interface SummerCohortSubmissionsSummary {
   }>;
 }
 
+const GITHUB_FETCH_TIMEOUT_MS = 8_000;
+
 /** Strip leading slashes / `<github-handle>.json` placeholder so we can use the
  *  path as a directory listing target on the GitHub Contents API. */
 function getDirectoryPath(submissionPath: string): string {
@@ -51,14 +59,32 @@ function getDirectoryPath(submissionPath: string): string {
   return idx >= 0 ? submissionPath.slice(0, idx) : submissionPath;
 }
 
-const VOTE_WEEK_BY_ID: Record<string, SummerCohortVoteWeek> = {
-  "week-1": SUMMER_COHORT_C1_VOTE_WEEKS[0],
-  "week-2": SUMMER_COHORT_C1_VOTE_WEEKS[1],
-  "week-3": SUMMER_COHORT_C1_VOTE_WEEKS[2],
+const VOTE_WEEK_BY_ID: Record<
+  SummerCohortId,
+  Record<string, SummerCohortVoteWeek>
+> = {
+  "cohort-1": {
+    "week-1": SUMMER_COHORT_C1_VOTE_WEEKS[0],
+    "week-2": SUMMER_COHORT_C1_VOTE_WEEKS[1],
+    "week-3": SUMMER_COHORT_C1_VOTE_WEEKS[2],
+  },
+  "cohort-2": {
+    "week-1": SUMMER_COHORT_C2_VOTE_WEEKS[0],
+    "week-2": SUMMER_COHORT_C2_VOTE_WEEKS[1],
+    "week-3": SUMMER_COHORT_C2_VOTE_WEEKS[2],
+  },
 };
 
-export function getVoteWeekById(weekId: string): SummerCohortVoteWeek | null {
-  return VOTE_WEEK_BY_ID[weekId] ?? null;
+/**
+ * Look up a vote-format week (week-1 / week-2 / week-3) for a given cohort.
+ * Different cohorts have different submission branches + dates, so callers
+ * must specify which cohort's view they're rendering.
+ */
+export function getVoteWeekById(
+  weekId: string,
+  cohortId: SummerCohortId = "cohort-1"
+): SummerCohortVoteWeek | null {
+  return VOTE_WEEK_BY_ID[cohortId]?.[weekId] ?? null;
 }
 
 interface ContentsApiItem {
@@ -162,6 +188,7 @@ export async function fetchSummerCohortSubmissions(
     path: dirPath,
     merged: 0,
     tryingToWin: 0,
+    githubFetchErrorCount: 0,
     submissions: [],
   };
 
@@ -171,21 +198,25 @@ export async function fetchSummerCohortSubmissions(
 
   let listRes: Response;
   try {
-    listRes = await fetch(listUrl, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    listRes = await fetchWithTimeout(
+      listUrl,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        next: { revalidate: 60 },
       },
-      next: { revalidate: 60 },
-    });
+      GITHUB_FETCH_TIMEOUT_MS
+    );
   } catch (error) {
     logger.warn("fetchSummerCohortSubmissions: contents-list fetch failed", {
       weekId,
       branch: week.submissionBranch,
       error: error instanceof Error ? error.message : String(error),
     });
-    return empty;
+    return { ...empty, githubFetchErrorCount: 1 };
   }
 
   // 404 = branch or directory doesn't exist yet (program hasn't started, or
@@ -197,41 +228,68 @@ export async function fetchSummerCohortSubmissions(
       branch: week.submissionBranch,
       status: listRes.status,
     });
-    return empty;
+    return { ...empty, githubFetchErrorCount: 1 };
   }
 
   let listJson: unknown;
   try {
     listJson = await listRes.json();
   } catch {
-    return empty;
+    return { ...empty, githubFetchErrorCount: 1 };
   }
-  if (!Array.isArray(listJson)) return empty;
+  if (!Array.isArray(listJson)) return { ...empty, githubFetchErrorCount: 1 };
 
   const fileItems = (listJson as ContentsApiItem[]).filter(isJsonFileItem);
 
-  const submissions = await Promise.all(
+  const submissionResults = await Promise.all(
     fileItems.map(async (item) => {
       const downloadUrl =
         typeof item.download_url === "string" ? item.download_url : null;
       const name = typeof item.name === "string" ? item.name : "";
       const fallbackHandle = name.replace(/\.json$/, "");
-      if (!downloadUrl) return null;
+      if (!downloadUrl) return { submission: null, githubFetchErrorCount: 0 };
       try {
-        const fileRes = await fetch(downloadUrl, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-          next: { revalidate: 60 },
-        });
-        if (!fileRes.ok) return null;
-        const fileJson = await fileRes.json();
-        return normalizeSubmission(fileJson, fallbackHandle);
+        const fileRes = await fetchWithTimeout(
+          downloadUrl,
+          {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            next: { revalidate: 60 },
+          },
+          GITHUB_FETCH_TIMEOUT_MS
+        );
+        if (!fileRes.ok) {
+          return { submission: null, githubFetchErrorCount: 1 };
+        }
+        let fileJson: unknown;
+        try {
+          fileJson = await fileRes.json();
+        } catch {
+          return { submission: null, githubFetchErrorCount: 1 };
+        }
+        return {
+          submission: normalizeSubmission(fileJson, fallbackHandle),
+          githubFetchErrorCount: 0,
+        };
       } catch {
-        return null;
+        return { submission: null, githubFetchErrorCount: 1 };
       }
     })
   );
 
-  const cleaned = submissions
+  const githubFetchErrorCount = submissionResults.reduce(
+    (sum, result) => sum + result.githubFetchErrorCount,
+    0
+  );
+  if (githubFetchErrorCount > 0) {
+    logger.warn("fetchSummerCohortSubmissions: file fetches failed", {
+      weekId,
+      branch: week.submissionBranch,
+      githubFetchErrorCount,
+    });
+  }
+
+  const cleaned = submissionResults
+    .map((result) => result.submission)
     .filter((s): s is RawSubmission => s !== null)
     .sort((a, b) => a.githubHandle.localeCompare(b.githubHandle));
 
@@ -268,6 +326,7 @@ export async function fetchSummerCohortSubmissions(
     path: dirPath,
     merged,
     tryingToWin,
+    githubFetchErrorCount,
     submissions: finalized,
   };
 }

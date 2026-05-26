@@ -35,9 +35,47 @@
 
 Thank you for your interest in contributing to Cursor Boston! This document provides guidelines and instructions for contributing to the project.
 
-> **Never coded before?** Start with [Get Started (No Experience Needed)](../docs/GET_STARTED.md) — a plain-language guide that shows you how to use AI tools to contribute.
+> **In the wrong doc?**
+> - Never coded before → [GET_STARTED.md](../docs/GET_STARTED.md) (uses AI tools, plain language, ~30 min)
+> - Want a guided first-PR walkthrough with each step explained → [FIRST_CONTRIBUTION.md](../docs/FIRST_CONTRIBUTION.md) (~30–45 min)
+> - Full local setup, scripts, troubleshooting → [DEVELOPMENT.md](../docs/DEVELOPMENT.md)
 >
-> **New to open source?** Follow the [First Contribution Guide](../docs/FIRST_CONTRIBUTION.md) for a step-by-step walkthrough, or the [Development Guide](../docs/DEVELOPMENT.md) for full setup, scripts, and troubleshooting.
+> Continue below if you know git and want the contribution policy (5-minute path + full reference).
+
+## Your first PR in 5 minutes
+
+If you already know how to use Git and just want the shortest path from a blank slate to a merged PR:
+
+1. **Fork this repo on GitHub.** Click *Fork* at the top right of [the repo page](https://github.com/rogerSuperBuilderAlpha/cursor-boston). This creates `your-username/cursor-boston` on your account.
+2. **Clone your fork** and add the upstream remote:
+   ```bash
+   git clone https://github.com/your-username/cursor-boston.git
+   cd cursor-boston
+   git remote add upstream https://github.com/rogerSuperBuilderAlpha/cursor-boston.git
+   npm install
+   cp .env.local.demo .env.local   # zero-config demo mode
+   npm run dev                      # opens http://localhost:3000
+   ```
+3. **Make your change** on a branch off `develop`:
+   ```bash
+   git checkout -b feature/your-change
+   ```
+   Edit, save, and verify the dev server reflects what you intended.
+4. **Commit with a DCO sign-off** (the `-s` flag is required):
+   ```bash
+   git commit -s -m "feat(scope): short imperative description"
+   ```
+5. **Push and open a pull request** against `develop`:
+   ```bash
+   git push origin feature/your-change
+   ```
+   Then click the *Compare & pull request* button on your fork's GitHub page. Make sure the base branch is `develop` (the default).
+
+That's the loop. Everything below explains the policy, code style, branching, claiming issues, and the long list of things the maintainer team checks before merge. If you want the model of what an excellent contributor-facing surface looks like for a focused subsystem, read **[`docs/generals/README.md`](../docs/generals/README.md)** — the Generals (game) contributor docs are the highest-quality contribution surface in the repo and are explicitly the model future feature projects should imitate.
+
+For substantial changes (new core API, major refactor, new subsystem), open an **[RFC](../docs/rfcs/README.md)** before opening implementation PRs. ADRs in [`docs/adr/`](../docs/adr/README.md) record the *why* after the fact; RFCs propose changes *before* they ship.
+
+The current roadmap lives at **[ROADMAP.md](../ROADMAP.md)** — claim-and-build feature projects, planned releases, and where each is in its cycle.
 
 ## Contribution policy (fork and pull request only)
 
@@ -47,9 +85,27 @@ A read-only clone of upstream is fine for browsing or local experimentation, but
 
 ## Branching model (`develop` and `main`)
 
-- **`develop`** is the **default branch** on GitHub. Open **all** contributor pull requests against `develop`. That branch is the integration line: **reviews and GitHub Actions CI** (lint, tests, etc.). **Vercel production deploys run only when changes merge to `main`** — we do not deploy every PR commit to Vercel (see [docs/VERCEL.md](../docs/VERCEL.md)).
+- **`develop`** is the **default branch** on GitHub. Open **most** contributor pull requests against `develop` — see [Where to PR](#where-to-pr--submission-branch-routing) below for the few exceptions. That branch is the integration line: **reviews and GitHub Actions CI** (lint, tests, etc.). **Vercel production deploys run only when changes merge to `main`** — we do not deploy every PR commit to Vercel (see [docs/VERCEL.md](../docs/VERCEL.md)).
 - **`main`** tracks **production**. Changes reach `main` only through a **release PR** from `develop` after maintainers batch and review what should ship. That keeps production history and deployments controlled.
 - After a release merge, maintainers sync **`develop`** with **`main`** so both stay aligned.
+
+## Where to PR — submission branch routing
+
+Most PRs go to `develop`. A handful go to **long-lived submission branches** — dedicated targets for event submissions, cohort work, and the maintainer application process. Pick the right base before opening your PR:
+
+| If you're doing this… | Base branch |
+|---|---|
+| Standard code, bug fix, feature, docs | **`develop`** |
+| PyData hackathon notebook | **`pydata-2026-submissions`** ([details](../pydata-2026-submissions/README.md)) |
+| Hack-a-Sprint showcase project | **`hack-a-sprint-2026-submissions`** ([details](../content/hackathons/hack-a-sprint-2026/submissions/README.md)) |
+| Summer cohort 1 week N submission | **`c1w1pm-submission`** / **`c1w2comms-submission`** / **`c1w3mkt-submission`** / **`c1w4edu-submission`** / **`c1w5startup-submission`** / **`c1w6oss-submission`** |
+| Summer cohort 2 vote-format week N submission | **`c2w1pm-submission`** / **`c2w2comms-submission`** / **`c2w3mkt-submission`** |
+| Game-mode content (units, artifacts, lore) | **`game-contributions`** |
+| Maintainer application | **`maintainer-application`** (see [GOVERNANCE](GOVERNANCE.md#becoming-a-maintainer)) |
+
+GitHub defaults the base branch to `develop` in the PR form — **change it manually** if you're targeting a submission branch. Submission branches are kept current with `develop` by maintainers after each release, so you don't need to do anything special to keep your fork fresh.
+
+See [`docs/SUBMISSION_BRANCHES.md`](../docs/SUBMISSION_BRANCHES.md) for the full explanation: what these branches are, why they exist, and what happens to your PR after it merges. If you're unsure where your PR should go, default to `develop` and a maintainer will redirect you in review.
 
 ## Architecture Decision Records
 
@@ -59,13 +115,27 @@ We document significant architectural choices in short, numbered records so futu
 
 **When to update an existing ADR:** If your PR supersedes a previous decision, update the old ADR's status to `Superseded` and link to the new one.
 
+## RFCs — proposing substantial changes
+
+ADRs record decisions *after* implementation. **RFCs** propose substantial changes *before* implementation begins, so the community can shape the design while the cost of changing direction is still low. RFCs live in [`docs/rfcs/`](../docs/rfcs/README.md) with a [template](../docs/rfcs/0000-template.md).
+
+**Open an RFC** when the change introduces a new subsystem, a new public contract, a major refactor (>10 files), a new load-bearing external dependency, or touches governance / release process. The RFC stays open for at least 7 days (14 for substantial proposals) before a decision.
+
+**Don't open an RFC** for bug fixes, docs improvements, balance changes to Generals (use the [game design proposal issue template](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues/new/choose) instead), or features that fit an existing subsystem and contract pattern. When in doubt, ask in `#maintainers` on Discord.
+
+After the RFC ships, a corresponding ADR is added under [`docs/adr/`](../docs/adr/README.md) as the canonical post-hoc record. The RFC stays as the historical proposal.
+
 ## Table of Contents
 
+- [Your first PR in 5 minutes](#your-first-pr-in-5-minutes)
 - [Contribution policy (fork and pull request only)](#contribution-policy-fork-and-pull-request-only)
 - [Branching model (develop and main)](#branching-model-develop-and-main)
+- [Where to PR — submission branch routing](#where-to-pr--submission-branch-routing)
 - [Architecture Decision Records](#architecture-decision-records)
+- [RFCs — proposing substantial changes](#rfcs--proposing-substantial-changes)
 - [Code of Conduct](#code-of-conduct)
 - [Developer Certificate of Origin](#developer-certificate-of-origin)
+- [License: GPL-3.0](#license-gpl-30)
 - [Getting Started](#getting-started)
 - [Development Workflow](#development-workflow)
 - [Claiming an Issue](#claiming-an-issue)
@@ -82,28 +152,26 @@ This project adheres to a [Code of Conduct](CODE_OF_CONDUCT.md). By participatin
 
 ## Developer Certificate of Origin
 
-This project uses the [Developer Certificate of Origin (DCO)](DCO.md) to ensure that contributors have the right to submit their contributions under the project's open source license.
-
-**All commits must be signed off** to indicate your agreement with the DCO:
+All commits must be signed off (the `-s` flag) to certify the contribution under the [DCO](DCO.md):
 
 ```bash
 git commit -s -m "Your commit message"
 ```
 
-The `-s` flag adds a `Signed-off-by` line to your commit message:
+This adds a `Signed-off-by: Your Name <your.email@example.com>` line to the commit. PRs with unsigned commits are blocked by the `dco.yml` workflow. See [DCO.md](DCO.md) for the full text of what you're certifying and how to fix a missing sign-off on past commits.
 
-```
-Signed-off-by: Your Name <your.email@example.com>
-```
+## License: GPL-3.0
 
-Make sure your Git name and email are configured:
+This project is licensed under [GPL-3.0](../LICENSE). By contributing, you agree your contributions are licensed under the same terms — the DCO sign-off on each commit certifies this.
 
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your.email@example.com"
-```
+Practical implications you should know up front:
 
-Pull requests with unsigned commits will not be merged. See [DCO.md](DCO.md) for more details.
+- **If you fork** this codebase for your own community / event platform, your fork must also be GPL-3.0. You cannot relicense it under MIT or Apache.
+- **Derivative works** that incorporate code from this project must also be GPL-3.0 — this is "strong copyleft."
+- **Network use is not distribution.** Running a private hosted instance does not trigger the copyleft. Only redistributing the code (or a binary) does. (This project uses GPL-3.0, not AGPL-3.0.)
+- **If you need a permissive license** (MIT / Apache) for proprietary use, this project is not the right starting point.
+
+Every TypeScript / TSX source file under `app/`, `lib/`, `components/`, `hooks/`, `contexts/`, and `types/` carries a GPL-3.0-only SPDX license header. The CI gate refuses to land new files without one — run `node scripts/add-gpl-headers.js` if you add files in those directories. See [LICENSE](../LICENSE) for full terms and [NOTICE](../NOTICE) for third-party attributions.
 
 ## Getting Started
 
@@ -135,9 +203,10 @@ Open [http://localhost:3000](http://localhost:3000) to see the app.
 ### Finding Issues to Work On
 
 - Browse [GitHub Issues](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues) for open tasks
-- Look for issues labeled `good first issue` if you're new to the project
-- Issues labeled `help wanted` are actively seeking contributors
-- **Feature projects** (issues [#78](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues/78)–[#83](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues/83)) are fully scoped, isolated features ready to build — see the [Claiming an Issue](#claiming-an-issue) section below
+- Look for issues labeled [`good first issue`](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you're new to the project. These are small (S/M-sized) self-contained tasks with explicit file paths and acceptance criteria — typically JSDoc / README additions, light refactors (extracting magic numbers or duplicate error strings, adding return-type annotations), accessibility labels, or scoped UI additions like empty/loading states. They're chosen to be doable without needing deep knowledge of the wider system.
+- Issues labeled `help wanted` are actively seeking contributors.
+- Issues labeled `maintainer:audit` are internal maintainer review work and are **not** contributor surface — you can safely ignore that label.
+- **Feature projects** (issues [#78](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues/78)–[#83](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues/83)) are fully scoped, isolated features ready to build end-to-end — see the [Claiming an Issue](#claiming-an-issue) section below.
 
 ### Branch Naming
 
@@ -537,8 +606,8 @@ If you have questions or need help:
    - Check our [Luma events](https://lu.ma/cursor-boston)
 
 4. **Report Issues**
-   - Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md)
-   - Include steps to reproduce and environment details
+   - Pick the right [issue template](https://github.com/rogerSuperBuilderAlpha/cursor-boston/issues/new/choose) — bug report, feature request, or game design proposal
+   - Bug reports use a YAML form with required fields (area dropdown, env, browser, repro steps)
 
 ## Additional Resources
 

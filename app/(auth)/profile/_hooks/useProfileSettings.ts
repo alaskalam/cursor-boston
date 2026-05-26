@@ -1,12 +1,11 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
  */
 
 import { useEffect, useState } from "react";
-import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { User } from "firebase/auth";
 import type { UserProfile } from "@/contexts/AuthContext";
 
@@ -138,9 +137,15 @@ export function useProfileSettings(user: User | null, userProfile: UserProfile |
         const data = await response.json();
         throw new Error(data.error || "Failed to save settings");
       }
-      if (db) {
-        const userRef = doc(db, "users", user.uid);
-        await updateDoc(userRef, { visibility: settings.visibility, updatedAt: serverTimestamp() });
+
+      const visibilityResponse = await fetch("/api/profile/visibility", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(settings.visibility),
+      });
+      if (!visibilityResponse.ok) {
+        const data = await visibilityResponse.json();
+        throw new Error(data.error || "Failed to save visibility settings");
       }
       await refreshUserProfile();
       setSuccess(true);
@@ -153,12 +158,20 @@ export function useProfileSettings(user: User | null, userProfile: UserProfile |
   };
 
   const togglePublic = async (isPublic: boolean) => {
-    if (!db || !user) return;
+    if (!user) return;
     const prev = settings.visibility.isPublic;
     setSettings((s) => ({ ...s, visibility: { ...s.visibility, isPublic } }));
     try {
-      const userRef = doc(db, "users", user.uid);
-      await updateDoc(userRef, { "visibility.isPublic": isPublic, updatedAt: serverTimestamp() });
+      const token = await user.getIdToken();
+      const response = await fetch("/api/profile/visibility", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isPublic }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to update public profile visibility");
+      }
+      await refreshUserProfile();
     } catch {
       // Revert on error
       setSettings((s) => ({ ...s, visibility: { ...s.visibility, isPublic: prev } }));

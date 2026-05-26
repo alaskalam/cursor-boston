@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -10,6 +11,8 @@
  * Simple in-memory rate limiter for API routes.
  * For production, consider using Redis or a dedicated rate limiting service.
  */
+
+import { getClientIp } from "./client-ip";
 
 interface RateLimitStore {
   [key: string]: {
@@ -131,7 +134,7 @@ export function checkRateLimit(
 
 /**
  * Get client identifier from request by extracting the IP address.
- * Checks proxy headers in priority order: x-forwarded-for, x-real-ip, cf-connecting-ip.
+ * Uses the shared trusted proxy parser so rate limiting and logging agree.
  * 
  * @param {Request} request - The incoming HTTP request.
  * @returns {string} The client IP address string, or "unknown" if not determinable.
@@ -143,13 +146,7 @@ export function checkRateLimit(
  * }
  */
 export function getClientIdentifier(request: Request): string {
-  // Try to get IP from various headers (for proxies/load balancers)
-  const forwarded = request.headers.get("x-forwarded-for");
-  const realIp = request.headers.get("x-real-ip");
-  const cfConnectingIp = request.headers.get("cf-connecting-ip"); // Cloudflare
-
-  const ip = forwarded?.split(",")[0]?.trim() || realIp || cfConnectingIp || "unknown";
-  return ip;
+  return getClientIp(request);
 }
 
 /**
@@ -247,11 +244,28 @@ export function withRateLimit(
  */
 export const rateLimitConfigs = {
   /**
-   * Strict rate limit for OAuth callbacks to prevent abuse and brute-forcing.
+   * Rate limit for OAuth callbacks. Per-IP, used as defense-in-depth —
+   * the actual brute-force protection lives in the cookie-bound
+   * `state` token validated inside each callback handler (see
+   * app/api/discord/callback/route.ts and app/api/github/callback/route.ts).
+   *
+   * Sized for shared-NAT venues. At in-person events (Hult campus on
+   * 2026-05-26 was the trigger), every attendee connecting Discord +
+   * GitHub hits this from the same egress IP.
+   *
+   * History:
+   *   - 10/15min  (original)        — blew up after ~5 attendees, #1430
+   *   - 100/15min (#1430)           — absorbed a ~50-person venue
+   *   - 1000/15min (this commit)    — re-hit on 2026-05-24 with 218+
+   *     confirmed attendees prepping connections two days before the
+   *     event; the previous ceiling saturated again. 1000/15min absorbs
+   *     a ~250-person venue with each user connecting both providers
+   *     AND a couple of retries each, without giving up the DoS
+   *     guardrail. Brute-force protection is unchanged (state cookie).
    */
   oauthCallback: {
     windowMs: 15 * 60 * 1000, // 15 minutes
-    maxRequests: 10, // 10 requests per 15 minutes
+    maxRequests: 1000, // 1000 requests per 15 minutes
   },
   /**
    * Moderate rate limit for incoming webhooks.
@@ -315,20 +329,6 @@ export const rateLimitConfigs = {
   hackathonShowcaseJudgeScore: {
     windowMs: 60 * 1000, // 1 minute
     maxRequests: 40, // 40 requests per minute
-  },
-  /**
-   * Rate limiting for unlocking Hackathon Showcase voting functionality.
-   */
-  hackathonShowcaseUnlock: {
-    windowMs: 60 * 1000, // 1 minute
-    maxRequests: 20, // 20 requests per minute
-  },
-  /**
-   * Strict rate limiting for brute-force prevention on Showcase unlock attempts.
-   */
-  hackathonShowcaseUnlockAttempts: {
-    windowMs: 5 * 60 * 1000, // 5 minutes
-    maxRequests: 15, // 15 attempts per 5 minutes
   },
   /**
    * Rate limiting for casting votes in the Hackathon Showcase.

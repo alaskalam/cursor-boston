@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -36,6 +37,13 @@ export const WORKS_WITH_LANGUAGES = [
 
 export type WorksWithTag = (typeof WORKS_WITH_LANGUAGES)[number];
 
+export interface CookbookEntrySeo {
+  title?: string;
+  description?: string;
+  image?: string;
+  canonicalUrl?: string;
+}
+
 export interface CookbookEntry {
   id: string;
   title: string;
@@ -49,4 +57,5 @@ export interface CookbookEntry {
   createdAt: string;
   upCount: number;
   downCount: number;
+  seo?: CookbookEntrySeo;
 }

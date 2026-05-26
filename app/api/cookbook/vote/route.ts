@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -13,20 +14,12 @@ import { parseRequestBody } from "@/lib/api-response";
 import { getClientIdentifier } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
 import { sanitizeDocId } from "@/lib/sanitize";
+import { cookbookContract } from "@/lib/api-schemas/cookbook";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type VoteType = "up" | "down";
-
-interface VoteBody {
-  entryId?: unknown;
-  type?: unknown;
-}
-
-function isNonNullObject(value: unknown): value is VoteBody {
-  return typeof value === "object" && value !== null;
-}
 
 const COOKBOOK_VOTE_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 60 };
 
@@ -70,21 +63,16 @@ export async function POST(request: NextRequest) {
 
     const rawBody = await parseRequestBody(request);
     if (rawBody instanceof NextResponse) return rawBody;
-    if (!isNonNullObject(rawBody)) {
+    const parsed = cookbookContract.vote.body.safeParse(rawBody);
+    if (!parsed.success) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
-    const entryId = typeof rawBody.entryId === "string" ? rawBody.entryId : undefined;
-    const type = rawBody.type;
-
-    const sanitizedEntryId = entryId ? sanitizeDocId(entryId) : null;
-    if (
-      !sanitizedEntryId ||
-      (type !== "up" && type !== "down")
-    ) {
+    const sanitizedEntryId = sanitizeDocId(parsed.data.entryId);
+    if (!sanitizedEntryId) {
       return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    const voteType = type as VoteType;
+    const voteType: VoteType = parsed.data.type;
     const entryRef = db.collection("cookbook_entries").doc(sanitizedEntryId);
     const voteRef = entryRef.collection("votes").doc(user.uid);
     const indexRef = db

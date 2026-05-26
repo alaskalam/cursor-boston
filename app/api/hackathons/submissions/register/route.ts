@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -11,12 +12,15 @@ import { getVerifiedUser } from "@/lib/server-auth";
 import { getCurrentVirtualHackathonId, getVirtualMonthStartEndUtc, isVirtualHackathonId } from "@/lib/hackathons";
 import { getClientIdentifier, rateLimitConfigs } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
+import { hackathonsContract } from "@/lib/api-schemas/hackathons";
+import { fetchWithTimeout } from "@/lib/http-fetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const HACKATHON_RATE_LIMIT = rateLimitConfigs.hackathonMutation;
+const GITHUB_FETCH_TIMEOUT_MS = 8_000;
 
 /**
  * Parse repo URL to owner/repo (e.g. https://github.com/owner/repo -> owner/repo).
@@ -60,14 +64,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Server not configured" }, { status: 500 });
     }
 
-    let body: Record<string, unknown>;
+    let body: unknown;
     try {
-      body = (await request.json()) as Record<string, unknown>;
+      body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
-    const repoUrl = (body.repoUrl as string)?.trim();
-    const hackathonId = (body.hackathonId as string) || getCurrentVirtualHackathonId();
+    const parsedBody = hackathonsContract.submissionRegister.body.safeParse(body);
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { error: parsedBody.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
+    const repoUrl = parsedBody.data.repoUrl.trim();
+    const hackathonId = parsedBody.data.hackathonId || getCurrentVirtualHackathonId();
 
     if (!repoUrl) {
       return NextResponse.json({ error: "repoUrl required" }, { status: 400 });
@@ -109,10 +120,19 @@ export async function POST(request: NextRequest) {
       headers.Authorization = `Bearer ${GITHUB_TOKEN}`;
     }
 
-    const ghRes = await fetch(
-      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
-      { headers }
-    );
+    let ghRes: Response;
+    try {
+      ghRes = await fetchWithTimeout(
+        `https://api.github.com/repos/${parsed.owner}/${parsed.repo}`,
+        { headers },
+        GITHUB_FETCH_TIMEOUT_MS
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Could not verify repo with GitHub" },
+        { status: 502 }
+      );
+    }
 
     if (ghRes.status === 404) {
       return NextResponse.json(

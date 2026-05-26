@@ -1,11 +1,74 @@
+const path = require('path')
+const { execSync } = require('child_process')
 const withBundleAnalyzer = require('@next/bundle-analyzer')({
   enabled: process.env.ANALYZE === 'true',
 })
 
+// Deterministic build ID. Resolution order:
+//   1. NEXT_BUILD_ID env var (override for CI / reproducibility tests)
+//   2. SOURCE_DATE_EPOCH-derived short SHA via `git rev-parse`
+//   3. fallback "dev" — only when git isn't available (sandboxed CI, no .git)
+// OpenSSF Best Practices Gold criterion `build_reproducible` requires
+// byte-identical output across builds at the same commit; see
+// docs/REPRODUCIBLE_BUILD.md.
+function reproducibleBuildId() {
+  if (process.env.NEXT_BUILD_ID) return process.env.NEXT_BUILD_ID
+  try {
+    return execSync('git rev-parse --short=12 HEAD', { encoding: 'utf8' }).trim()
+  } catch {
+    return 'dev'
+  }
+}
+
+function isCiEnvironment() {
+  return process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+}
+
+function shouldSkipTypecheck() {
+  if (process.env.SKIP_TYPECHECK !== '1') return false
+  if (isCiEnvironment()) {
+    throw new Error('SKIP_TYPECHECK=1 is local-only and must not be set in CI')
+  }
+  return true
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // If a package-lock.json exists above this repo (e.g. in $HOME), Next.js would pick that
+  // directory as the monorepo root and resolve node_modules there — breaking imports such as
+  // `firebase/auth`. Pin the tracing / Turbopack root to this application directory.
+  outputFileTracingRoot: path.join(__dirname),
+
+  // Deterministic build ID derived from git HEAD — feeds into .next/BUILD_ID and chunk hashes.
+  generateBuildId: reproducibleBuildId,
+
   // Standalone output is only for Docker builds (see docker/Dockerfile). Omit on Vercel.
   ...(process.env.DOCKER_BUILD === '1' ? { output: 'standalone' } : {}),
+
+  // Emergency local-build bypass — SKIP_TYPECHECK=1 disables both the
+  // TypeScript type-check and the ESLint check during `next build`. Use ONLY
+  // for local visual QA when pre-existing in-flight branch state has
+  // unrelated type/lint errors. NEVER set this in CI; CI is the boundary
+  // that catches real type errors. See CLAUDE.md "Local production
+  // verification — emergency typecheck bypass".
+  ...(shouldSkipTypecheck()
+    ? {
+        typescript: { ignoreBuildErrors: true },
+        eslint: { ignoreDuringBuilds: true },
+      }
+    : {}),
+
+  serverExternalPackages: ['@cursor/sdk'],
+
+  webpack: (config) => {
+    // Deterministic chunk/module IDs are the Next.js production default since v14,
+    // but pin them here explicitly so the configuration survives upstream changes.
+    if (config.optimization) {
+      config.optimization.moduleIds = 'deterministic'
+      config.optimization.chunkIds = 'deterministic'
+    }
+    return config
+  },
 
   images: {
     remotePatterns: [
@@ -43,11 +106,11 @@ const nextConfig = {
               "default-src 'self'",
               // Firebase/Google OAuth popup flows load Google-hosted scripts.
               // unsafe-inline kept for Firebase Auth popup SDK; unsafe-eval removed (not needed in production builds).
-              "script-src 'self' 'unsafe-inline' https://embed.lu.ma https://apis.google.com https://accounts.google.com",
-              "style-src 'self' 'unsafe-inline'",
+              "script-src 'self' 'unsafe-inline' https://embed.lu.ma https://apis.google.com https://accounts.google.com https://www.googletagmanager.com",
+              "style-src 'self' 'unsafe-inline' https://embed.lu.ma",
               "img-src 'self' data: blob: https://firebasestorage.googleapis.com https://*.googleusercontent.com https://lh3.googleusercontent.com https://avatars.githubusercontent.com https://*.cartocdn.com https://unpkg.com",
               "font-src 'self'",
-              "connect-src 'self' https://*.firebaseio.com https://*.firebaseapp.com https://*.googleapis.com https://accounts.google.com https://*.cartocdn.com https://unpkg.com",
+              "connect-src 'self' https://*.firebaseio.com https://*.firebaseapp.com https://*.googleapis.com https://accounts.google.com https://www.google-analytics.com https://www.google.com https://*.cartocdn.com https://unpkg.com",
               "frame-src https://lu.ma https://luma.com https://accounts.google.com https://*.firebaseapp.com",
               "object-src 'none'",
               "base-uri 'self'",

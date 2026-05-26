@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -327,6 +328,7 @@ export default function EmceeLiveSessionPage({
                   alt="QR code for audience live queue"
                   width={224}
                   height={224}
+                  sizes="224px"
                   unoptimized
                   className="mx-auto h-56 w-56"
                 />

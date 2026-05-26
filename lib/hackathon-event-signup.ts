@@ -1,24 +1,26 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
  */
 
-import { HACK_A_SPRINT_2026_EVENT_ID } from "@/lib/hackathon-showcase";
 import {
+  SPORTS_HACK_2026_ATTENDANCE_LIMIT,
   SPORTS_HACK_2026_CAPACITY,
   SPORTS_HACK_2026_DECLINED_EMAILS,
   SPORTS_HACK_2026_EVENT_ID,
   SPORTS_HACK_2026_JUDGE_EMAILS,
 } from "@/lib/sports-hack-2026";
+import {
+  HACKATHON_EVENT_ID_LIST,
+  type HackathonEventId,
+} from "@/types/hackathon-events";
 
 /** In-person / special events with website signup (separate from Luma). */
-export const HACKATHON_EVENT_SIGNUP_IDS = [
-  HACK_A_SPRINT_2026_EVENT_ID,
-  SPORTS_HACK_2026_EVENT_ID,
-] as const;
+export const HACKATHON_EVENT_SIGNUP_IDS = HACKATHON_EVENT_ID_LIST;
 
-export type HackathonEventSignupId = (typeof HACKATHON_EVENT_SIGNUP_IDS)[number];
+export type HackathonEventSignupId = HackathonEventId;
 
 export function isHackathonEventSignupId(
   eventId: string
@@ -27,7 +29,7 @@ export function isHackathonEventSignupId(
 }
 
 export function hackathonEventSignupDocId(
-  eventId: string,
+  eventId: HackathonEventSignupId,
   userId: string
 ): string {
   return `${eventId}__${userId}`;
@@ -68,6 +70,39 @@ export const CURSOR_CREDIT_TOP_N = 50;
 export function getConfirmedCapacityForEvent(eventId: string): number {
   if (eventId === SPORTS_HACK_2026_EVENT_ID) return SPORTS_HACK_2026_CAPACITY;
   return CURSOR_CREDIT_TOP_N;
+}
+
+/**
+ * Per-event guaranteed-attendance cap. Distinct from the credit cap above:
+ * the top SPORTS_HACK_2026_ATTENDANCE_LIMIT confirmed-attending users by
+ * leaderboard rank are guaranteed entry; the top SPORTS_HACK_2026_CAPACITY
+ * of those also get a credit link.
+ *
+ * Returns 0 for events that don't use the second-step "Confirm attendance"
+ * flow. Snapshot emits the new attendance fields only when this is > 0.
+ */
+export function getAttendanceLimitForEvent(eventId: string): number {
+  if (eventId === SPORTS_HACK_2026_EVENT_ID) return SPORTS_HACK_2026_ATTENDANCE_LIMIT;
+  return 0;
+}
+
+/**
+ * Per-event ranking model selector.
+ *
+ * - `"freeze"` (default) — the historical 2-band model. Order driven by the
+ *   freeze-set `confirmedAt`, then cohort-1 boost, then PR count desc, then
+ *   signup time. Used by `hack-a-sprint-2026`.
+ * - `"three-tier"` — sports-hack-2026 model. Three tiers ordered by
+ *   pre-event engagement (claimed+user-confirmed → claimed → external-RSVP-only),
+ *   sorted within each tier by PR count desc / signup time. Cumulative cutoffs
+ *   at 119 (credit band) and 200 (attendance band) over the concatenated order.
+ *   Credit eligibility additionally requires a submission PR on event day.
+ */
+export type HackathonRankingModel = "freeze" | "three-tier";
+
+export function getRankingModelForEvent(eventId: string): HackathonRankingModel {
+  if (eventId === SPORTS_HACK_2026_EVENT_ID) return "three-tier";
+  return "freeze";
 }
 
 /**
@@ -143,7 +178,9 @@ export function getJudgeEmailsForEvent(eventId: string): ReadonlySet<string> {
   return JUDGE_EMAILS;
 }
 
-export function getDeclinedEmailsForEvent(eventId: string): ReadonlySet<string> {
+export function getDeclinedEmailsForEvent(
+  eventId: string
+): ReadonlySet<string> {
   if (eventId === SPORTS_HACK_2026_EVENT_ID) return SPORTS_HACK_2026_DECLINED_EMAILS;
   return DECLINED_EMAILS;
 }

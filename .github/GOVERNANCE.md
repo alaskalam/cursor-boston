@@ -42,15 +42,36 @@ Maintainers are contributors who have demonstrated a sustained commitment to the
 - Ensuring code quality and consistency
 - Enforcing the Code of Conduct
 
-**Current Maintainers:**
+**Current Maintainers:** the canonical roster — including names, GitHub handles, role tier, and per-area ownership — lives in [`MAINTAINERS.md`](../MAINTAINERS.md). This document describes the *rules* maintainers operate under; the roster file describes *who* the maintainers are at any given moment.
 
-| Name | GitHub | Role |
-|------|--------|------|
-| Roger | [@rogerSuperBuilderAlpha](https://github.com/rogerSuperBuilderAlpha) | Project Lead |
+#### Contributor ladder
+
+The promotion path from first contribution to maintainer responsibility. Modeled on [kubernetes/community community-membership.md](https://github.com/kubernetes/community/blob/master/community-membership.md) with project-scale adjustments.
+
+| Level | Capabilities | Requirements to enter | Sponsor | Granted by |
+|---|---|---|---|---|
+| **Contributor** | Open PRs, file issues, participate in discussions | Open ≥1 PR or issue. Automatic. | n/a | — |
+| **Reviewer** | Trusted to review PRs in an area, but not to merge. Listed in `CODEOWNERS` for that area. | ≥5 merged PRs in the area over ≥30 days; CoC compliance; code-review judgment demonstrated in PR comments | 1 maintainer in the area | Maintainer consensus + Project Lead approval |
+| **Maintainer** | Merge PRs, triage issues, set technical direction in their area. Repo write access. | Active as Reviewer for ≥3 months; sustained code-review activity; CoC compliance; area expertise; bus-factor relief (each new maintainer must reduce single-point dependence somewhere) | 2 maintainers | Maintainer consensus + Project Lead approval |
+| **Community Maintainer** | Same merge rights as Maintainer; expected to focus on welcoming, contributor support, and external-facing surfaces rather than deep code review on `lib/` or `app/api/` | Active contribution to community surface (docs, events, organizing, partner pages) for ≥3 months; CoC compliance | 1 maintainer | Maintainer consensus + Project Lead approval |
+| **Project Lead** | Final decision authority; one seat. | Documented succession (current Project Lead names a successor publicly) | n/a | Outgoing Project Lead, ratified by maintainer consensus |
+
+**Promotion happens at a regular cadence** — not on demand. Quarterly (Jan, Apr, Jul, Oct) the maintainer team reviews who has met the next-level criteria and makes promotion decisions. Self-nomination is encouraged and follows Path B below; nomination by an existing maintainer follows Path A.
+
+**Demotion / step-down** is graceful — see "Step down gracefully" in Maintainer Responsibilities below. A maintainer who has been inactive for ≥6 months is moved to **Maintainer Emeritus** (no merge rights, retained recognition) at the next quarterly review unless they ask to stay. The emeritus list lives in [`MAINTAINERS.md`](../MAINTAINERS.md#emeritus).
+
+**Succession plan for the Project Lead role:**
+
+1. The Project Lead names a designated successor in [`MAINTAINERS.md`](../MAINTAINERS.md) (currently: vacant — to be filled).
+2. If the Project Lead becomes unreachable for >30 days without prior notice:
+   - The maintainer team takes over decisions by consensus.
+   - The maintainer team selects an Acting Project Lead within 14 days.
+   - Repo admin / secrets / external accounts (Discord, GitHub Sponsorship, domain registrar) are transferred to the Acting Project Lead via the access path documented in `docs/SECURITY_OPERATIONS.md` (planned).
+3. The Acting Project Lead serves until the original Project Lead returns or until a new Project Lead is ratified by maintainer consensus at the next quarterly review.
 
 #### Becoming a Maintainer
 
-Contributors may be invited to become maintainers based on:
+Contributors may become maintainers based on:
 
 - Sustained, high-quality contributions over time
 - Deep understanding of the codebase and architecture
@@ -58,11 +79,25 @@ Contributors may be invited to become maintainers based on:
 - Commitment to the project's mission and values
 - Positive interactions with the community
 
-The process:
+There are **two paths** to becoming a maintainer. The evaluation criteria above are the same for both.
+
+##### Path A — Nomination
+
 1. An existing maintainer nominates a contributor
 2. Maintainers discuss the nomination privately
 3. Decision is made by consensus among maintainers
 4. If approved, the contributor is invited to become a maintainer
+
+##### Path B — Self-nomination (expressing interest publicly)
+
+We don't want the maintainer seat to depend on being noticed. Contributors who are interested in the role can put themselves forward:
+
+1. Open a pull request against the **[`maintainer-application`](https://github.com/rogerSuperBuilderAlpha/cursor-boston/tree/maintainer-application)** branch using the [Maintainer Application Template](MAINTAINER_APPLICATION_TEMPLATE.md). The PR body fills out the template (background, contribution history, areas of interest, time commitment).
+2. Maintainers review the application using the same criteria as Path A.
+3. If accepted, the application PR is merged and the contributor is invited to become a maintainer.
+4. If declined or deferred, the maintainer team responds in the PR with feedback and (where applicable) what additional contribution would change the outcome.
+
+The two paths converge on the same decision rule: consensus among maintainers, with the Project Lead approving.
 
 #### Maintainer Responsibilities
 
@@ -114,16 +149,6 @@ For decisions where consensus cannot be reached:
 4. Decisions require a simple majority
 5. The Project Lead may break ties
 
-### When there is only one maintainer
-
-While the maintainer team has a **single** person with merge rights (see the table above):
-
-- **Majority votes** described elsewhere in this document are decided by that maintainer (or by the Project Lead if they are the same person).
-- **Major changes** that call for two maintainer approvals should still get **community review time** (e.g. open PR, request feedback on Discord) before merge; the Project Lead approves when satisfied.
-- **Governance changes** that require “a majority of maintainers” require **Project Lead approval** plus the usual PR and comment period.
-
-When additional maintainers are added, this section no longer applies and normal multi-maintainer rules apply.
-
 ### Emergency Decisions
 
 In urgent situations (security vulnerabilities, Code of Conduct violations, critical bugs), maintainers may act without full consensus:
@@ -135,13 +160,39 @@ In urgent situations (security vulnerabilities, Code of Conduct violations, crit
 
 ## Code Review
 
-All code changes require review before merging:
+All code changes require review before merging.
 
-- **Minor changes** (typos, docs, small fixes): One maintainer approval
-- **Standard changes** (features, bug fixes): One maintainer approval, 24-hour waiting period for objections
-- **Major changes** (architecture, breaking changes): Two maintainer approvals, 72-hour waiting period
+### Tiers
 
-The author of a PR cannot approve their own changes. However, maintainers may merge their own PRs after receiving the required approvals.
+- **Minor changes** (typos, docs-only edits, dependency bumps with no changelog impact, generated-file refreshes, badge/README link tweaks): **One maintainer approval**. No waiting period.
+- **Standard changes** (features, bug fixes, non-trivial refactors, any change touching `lib/`, `app/api/`, `config/`, or workflows): **Two maintainer approvals**, 24-hour waiting period for objections.
+- **Major changes** (architecture changes, breaking changes, governance edits, security-policy edits): **Two maintainer approvals**, 72-hour waiting period.
+
+The 2-reviewer requirement on Standard and Major changes is enforced at the GitHub level via branch protection on `develop` and `main` (`required_approving_review_count: 2`). See [`docs/BRANCH_PROTECTION.md`](../docs/BRANCH_PROTECTION.md) for the live settings and OpenSSF Best Practices Gold criterion `two_person_review` for the rationale.
+
+### No self-approval
+
+The author of a PR cannot approve their own changes. A maintainer may merge their own PR **only after** the required number of other maintainer "Approve" reviews have landed. This rule applies to every PR, including governance/docs PRs and including the Project Lead.
+
+This is enforced both procedurally (maintainers are expected to follow it) and observably (GitHub's review history on each PR is the audit trail).
+
+### Project Lead bypass
+
+The Project Lead may use `gh pr merge --admin` to bypass the 2-reviewer requirement in two narrow cases:
+
+1. **Develop → main release PRs** — `--admin` is the documented mechanism to bypass DCO failures and the `mergeStateStatus=BEHIND` topology quirk that affects rebase-style releases.
+2. **Urgent production fixes** — security patches or live-incident hotfixes when a second reviewer is not reachable within the window the incident allows.
+
+Every bypass is audit-trail-visible in the GitHub merge metadata (the API records which user merged with admin privileges). Bypasses MUST be:
+
+- Linked in `#maintainers` on Discord within 24 hours with the reason.
+- Reviewed retroactively by a second maintainer within 7 days; any issues found are fixed via a follow-up PR.
+
+The bypass exists so the policy never blocks a security fix or a clean release, not as a routine path for feature work.
+
+### Exception: solo-emergency merges (legacy alias)
+
+The "solo-emergency merge" terminology previously documented in this section is now covered by the Project Lead bypass clause above. The mechanics are the same: emergency merge, link in `#maintainers` within 24 hours, retroactive second review within 7 days.
 
 ## Releases
 

@@ -1,4 +1,5 @@
 /**
+ * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Cursor Boston
  * This file is part of Cursor Boston, licensed under GPL-3.0.
  * See LICENSE file for details.
@@ -11,6 +12,15 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getClientIdentifier } from "@/lib/rate-limit";
 import { checkUpstashRateLimit } from "@/lib/upstash-rate-limit";
 import { sanitizeName, sanitizeText, sanitizeUrl } from "@/lib/sanitize";
+import { profileContract } from "@/lib/api-schemas/profile";
+import {
+  PROFILE_BIO_MAX_LENGTH_ERROR,
+  PROFILE_COMPANY_MAX_LENGTH_ERROR,
+  PROFILE_DISPLAY_NAME_MAX_LENGTH_ERROR,
+  PROFILE_DISPLAY_NAME_MIN_LENGTH_ERROR,
+  PROFILE_JOB_TITLE_MAX_LENGTH_ERROR,
+  PROFILE_LOCATION_MAX_LENGTH_ERROR,
+} from "@/lib/error-messages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,12 +53,20 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Server not configured" }, { status: 500 });
     }
 
-    let body: Record<string, unknown>;
+    let rawBody: unknown;
     try {
-      body = (await request.json()) as Record<string, unknown>;
+      rawBody = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid JSON in request body" }, { status: 400 });
     }
+    const parsed = profileContract.update.body.safeParse(rawBody);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid body" },
+        { status: 400 }
+      );
+    }
+    const body = parsed.data;
     const updates: Record<string, unknown> = {};
 
     // Display name
@@ -56,13 +74,13 @@ export async function PATCH(request: NextRequest) {
       const sanitized = sanitizeName(body.displayName);
       if (sanitized.length < 2) {
         return NextResponse.json(
-          { error: "Display name must be at least 2 characters" },
+          { error: PROFILE_DISPLAY_NAME_MIN_LENGTH_ERROR },
           { status: 400 }
         );
       }
       if (sanitized.length > 50) {
         return NextResponse.json(
-          { error: "Display name must be 50 characters or less" },
+          { error: PROFILE_DISPLAY_NAME_MAX_LENGTH_ERROR },
           { status: 400 }
         );
       }
@@ -74,7 +92,7 @@ export async function PATCH(request: NextRequest) {
       const sanitized = sanitizeText(body.bio);
       if (sanitized.length > 500) {
         return NextResponse.json(
-          { error: "Bio must be 500 characters or less" },
+          { error: PROFILE_BIO_MAX_LENGTH_ERROR },
           { status: 400 }
         );
       }
@@ -86,7 +104,7 @@ export async function PATCH(request: NextRequest) {
       const sanitized = sanitizeText(body.location);
       if (sanitized.length > 100) {
         return NextResponse.json(
-          { error: "Location must be 100 characters or less" },
+          { error: PROFILE_LOCATION_MAX_LENGTH_ERROR },
           { status: 400 }
         );
       }
@@ -98,7 +116,7 @@ export async function PATCH(request: NextRequest) {
       const sanitized = sanitizeText(body.company);
       if (sanitized.length > 100) {
         return NextResponse.json(
-          { error: "Company must be 100 characters or less" },
+          { error: PROFILE_COMPANY_MAX_LENGTH_ERROR },
           { status: 400 }
         );
       }
@@ -110,7 +128,7 @@ export async function PATCH(request: NextRequest) {
       const sanitized = sanitizeText(body.jobTitle);
       if (sanitized.length > 100) {
         return NextResponse.json(
-          { error: "Job title must be 100 characters or less" },
+          { error: PROFILE_JOB_TITLE_MAX_LENGTH_ERROR },
           { status: 400 }
         );
       }
@@ -120,7 +138,7 @@ export async function PATCH(request: NextRequest) {
     // Social links
     if (body.socialLinks && typeof body.socialLinks === "object") {
       const socialUpdates: Record<string, string | null> = {};
-      
+
       for (const [key, value] of Object.entries(body.socialLinks)) {
         if (typeof value === "string" && value.trim()) {
           const sanitized = sanitizeUrl(value);
@@ -131,7 +149,7 @@ export async function PATCH(request: NextRequest) {
           socialUpdates[key] = null;
         }
       }
-      
+
       if (Object.keys(socialUpdates).length > 0) {
         // Merge with existing social links
         const userRef = db.collection("users").doc(user.uid);
